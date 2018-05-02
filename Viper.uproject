@@ -1,0 +1,16 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{C6357347-4B74-E6F3-F49C-AAAE45D43E9E}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "Viper",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine"
+			]
+		}
+	]
+}
