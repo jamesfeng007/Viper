@@ -9,7 +9,7 @@
 UCLASS(config=Game)
 class AViperCharacter : public ACharacter
 {
-	GENERATED_BODY()
+	GENERATED_UCLASS_BODY()
 
 	/** Camera boom positioning the camera behind the character */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
@@ -18,6 +18,9 @@ class AViperCharacter : public ACharacter
 	/** Follow camera */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	class UCameraComponent* FollowCamera;
+
+// 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+// 	UCapsuleComponent* ProneCapsuleComponent;
 public:
 	AViperCharacter();
 
@@ -36,6 +39,9 @@ public:
 	/** Make the character jump on the next update.*/
 	UFUNCTION(BlueprintCallable)
 	virtual void Jump() override;
+
+	UFUNCTION(BlueprintImplementableEvent, meta = (DisplayName = "OnTickViperChar", ScriptName = "OnTickViperChar"))
+	void OnTickViperChar(float DeltaSeconds);
 
 protected:
 
@@ -73,5 +79,9 @@ public:
 	FORCEINLINE class USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	/** Returns FollowCamera subobject **/
 	FORCEINLINE class UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+
+public:
+
+	virtual void Tick(float DeltaSeconds) override;
 };
 

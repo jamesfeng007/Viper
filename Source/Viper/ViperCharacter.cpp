@@ -8,11 +8,14 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Engine/CollisionProfile.h"
+#include "ViperCharacterMovementComponent.h"
 
 //////////////////////////////////////////////////////////////////////////
 // AViperCharacter
 
-AViperCharacter::AViperCharacter()
+AViperCharacter::AViperCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UViperCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
@@ -45,6 +48,18 @@ AViperCharacter::AViperCharacter()
 
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named MyCharacter (to avoid direct content references in C++)
+
+// 	ProneCapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("ProneCollisionCylinder"));
+// 	ProneCapsuleComponent->InitCapsuleSize(34.0f, 88.0f);
+// 	ProneCapsuleComponent->SetCollisionProfileName(UCollisionProfile::Pawn_ProfileName);
+// 
+// 	ProneCapsuleComponent->CanCharacterStepUpOn = ECB_No;
+// 	ProneCapsuleComponent->bShouldUpdatePhysicsVolume = true;
+// 	ProneCapsuleComponent->bCheckAsyncSceneOnMove = false;
+// 	ProneCapsuleComponent->SetCanEverAffectNavigation(false);
+// 	ProneCapsuleComponent->bDynamicObstacle = true;
+// 
+// 	ProneCapsuleComponent->SetupAttachment(RootComponent);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -136,4 +151,11 @@ void AViperCharacter::MoveRight(float Value)
 		// add movement in that direction
 		AddMovementInput(Direction, Value);
 	}
+}
+
+void AViperCharacter::Tick(float DeltaSeconds)
+{
+	AActor::Tick(DeltaSeconds);
+	OnTickViperChar(DeltaSeconds);
+
 }
