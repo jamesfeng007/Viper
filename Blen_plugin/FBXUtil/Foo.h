@@ -11,8 +11,6 @@ class Foo
 {
 public:
 	Foo(int);
-	void bar();
-	int foobar(int);
 
 	void AddVertex(float x, float y, float z);
 	void AddNormal(float x, float y, float z);
@@ -20,10 +18,12 @@ public:
 	void AddUV(int uvIndex, float x, float y);
 	void AddIndex(int index);
 	void AddUVIndex(int uvIndex, int index);
+	void AddMatIndex(int index);
 	void AddLoopStart(int start);
 	void AddSmoothing(int smooth);
 	void SetSmoothMode(int mode);
 	void SetMeshName(char* name);
+	void AddMaterial(char* mName, char* sName);
 	void Print();
 
 	bool Export(char* filePath);
@@ -61,12 +61,12 @@ public:
 
 	struct UV
 	{
-		Normal() : x(0.f), y(0.f)
+		UV() : x(0.f), y(0.f)
 		{
 
 		}
 
-		Normal(float _x, float _y)
+		UV(float _x, float _y)
 			:x(_x), y(_y)
 		{
 
@@ -94,6 +94,27 @@ public:
 		std::vector<int> mUVIndices;
 	};
 
+	struct Material
+	{
+		Material()
+		{
+
+		}
+
+		Material(char* mName, char* sName)
+			: materialName(std::string(mName)), shadingName(std::string(sName))
+			, emissiveColor(FbxDouble3(0.0, 0.0, 0.0)), ambientColor(FbxDouble3(1.0, 0.0, 0.0)), diffuseColor(FbxDouble3(1.0, 1.0, 0.0))
+		{
+
+		}
+
+		std::string materialName;
+		std::string shadingName;
+		FbxDouble3 emissiveColor;
+		FbxDouble3 ambientColor;
+		FbxDouble3 diffuseColor;
+	};
+
 private:
 
 	bool CreateScene(FbxScene* pScene);
@@ -106,5 +127,7 @@ private:
 	std::vector<int> mLoopStart;
 	std::vector<int> mSmoothing;
 	std::map<int, LayerElementUVInfo> mUVInfos;
+	std::vector<int> mMatIndices;
 	 int mSmoothMode; //FbxLayerElement::EMappingMode: eByPolygon-0, eByEdge-1
+	 std::vector<Material> mMaterials;
 };

@@ -640,6 +640,12 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             name="Version",
             description="Choose which version of the exporter to use",
             )
+    use_mesh_modifiers = BoolProperty(
+            name="Apply Modifiers",
+            description="Apply modifiers to mesh objects (except Armature ones) - "
+                        "WARNING: prevents exporting shape keys",
+            default=True,
+            )    
     mesh_smooth_type = EnumProperty(
         name="Smoothing",
         items=(('OFF', "Normals Only", "Export only normals instead of writing edge or face smoothing data"),
@@ -650,6 +656,30 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
                     "(prefer 'Normals Only' option if your target importer understand split normals)",
         default='OFF',
         )
+    use_mesh_edges = BoolProperty(
+        name="Loose Edges",
+        description="Export loose edges (as two-vertices polygons)",
+        default=False,
+        )
+    use_tspace = BoolProperty(
+            name="Tangent Space",
+            description="Add binormal and tangent vectors, together with normal they form the tangent space "
+                        "(will only work correctly with tris/quads only meshes!)",
+            default=False,
+            )
+    object_types = EnumProperty(
+            name="Object Types",
+            options={'ENUM_FLAG'},
+            items=(('EMPTY', "Empty", ""),
+                   ('CAMERA', "Camera", ""),
+                   ('LAMP', "Lamp", ""),
+                   ('ARMATURE', "Armature", "WARNING: not supported in dupli/group instances"),
+                   ('MESH', "Mesh", ""),
+                   ('OTHER', "Other", "Other geometry types, like curve, metaball, etc. (converted to meshes)"),
+                   ),
+            description="Which kind of object to export",
+            default={'EMPTY', 'CAMERA', 'LAMP', 'ARMATURE', 'MESH', 'OTHER'},
+            )    
     
     def draw(self, context):
         layout = self.layout

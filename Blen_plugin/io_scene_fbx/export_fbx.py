@@ -1576,16 +1576,12 @@ def save_single(operator, scene, filepath="",
                    '\n\t\t\tReferenceInformationType: "IndexToDirect"'
                    '\n\t\t\tUV: ' % (uvindex, uvlayer.name))
                 uv2idx = tuple(set(uvco))
-                
-                print("chunk")
-                for chunk in uv2idx:
-                    print(chunk)
 
                 fw(',\n\t\t\t    '
                    ''.join(','.join('%.6f,%.6f' % uv for uv in chunk) for chunk in grouper_exact(uv2idx, _nchunk)))
                 fw('\n\t\t\tUVIndex: ')
                 uv2idx = {uv: idx for idx, uv in enumerate(uv2idx)}
-               
+                                   
                 fw(',\n\t\t\t         '
                    ''.join(','.join('%d' % uv2idx[uv] for uv in chunk) for chunk in grouper_exact(uvco, _nchunk_idx)))
                 fw('\n\t\t}')
@@ -1643,6 +1639,9 @@ def save_single(operator, scene, filepath="",
                 _it_mat = (mats[p.material_index] for p in me.polygons)
                 _it_tex = (pt.image if pt else None for pt in poly_tex)  # WARNING - MULTI UV LAYER IMAGES NOT SUPPORTED
                 t_mti = (mat2idx[m, t] for m, t in zip(_it_mat, _it_tex))
+                
+
+                
                 fw(',\n\t\t\t           '
                    ''.join(','.join('%d' % i for i in chunk) for chunk in grouper_exact(t_mti, _nchunk)))
             fw('\n\t\t}')

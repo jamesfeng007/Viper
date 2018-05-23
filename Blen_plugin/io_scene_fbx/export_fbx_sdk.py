@@ -233,8 +233,27 @@ def save_single(operator, scene, filepath="",
 
     # ----------------------------------------------
     
+    def write_material(matname, mat):
+        if mat:
+            mat_shadeless = mat.use_shadeless
+            if mat_shadeless:
+                mat_shader = 'Lambert'
+            else:
+                if mat.diffuse_shader == 'LAMBERT':
+                    mat_shader = 'Lambert'
+                else:
+                    mat_shader = 'Phong'
+                    
+        else:
+            mat_shader = 'Phong'            
+        
+        fbxSDKExport.add_material(c_char_p(matname.encode('utf-8')), c_char_p(mat_shader.encode('utf-8')))
+    
     def write_mesh(my_mesh):
         me = my_mesh.blenData
+        do_uvs = bool(me.uv_layers)
+        do_materials = bool([m for m in my_mesh.blenMaterials if m is not None])
+        do_textures = bool([t for t in my_mesh.blenTextures if t is not None])
         
         fbxSDKExport.set_mesh_name(c_char_p(my_mesh.fbxName.encode('utf-8')))
         
@@ -296,9 +315,9 @@ def save_single(operator, scene, filepath="",
             uvlayers = me.uv_layers
             uvtextures = me.uv_textures
             t_uv = [None] * len(me.loops) * 2
-            t_pi = None
             uv2idx = None
             tex2idx = None
+            _nchunk_idx = 64  # Number of UV indices per line
             
             if do_textures:
                 is_tex_unique = len(my_mesh.blenTextures) == 1
@@ -309,8 +328,36 @@ def save_single(operator, scene, filepath="",
                 uvlayer.data.foreach_get("uv", t_uv)
                 uvco = tuple(zip(*[iter(t_uv)] * 2))
                 fbxSDKExport.create_uv_info(uvindex, c_char_p(uvlayer.name.encode('utf-8')))
-        
-        fbxSDKExport.Print()
+                uv2idx = tuple(set(uvco))
+                for uv in uv2idx:
+                    fbxSDKExport.add_uv(uvindex, uv[0], uv[1])
+                uv2idx = {uv: idx for idx, uv in enumerate(uv2idx)}
+                for chunk in grouper_exact(uvco, _nchunk_idx):
+                    for uv in chunk:
+                        fbxSDKExport.add_uv_index(uvindex, uv2idx[uv])    
+            
+            del t_uv
+        if do_materials:
+            is_mat_unique = len(my_mesh.blenMaterials) == 1
+            if is_mat_unique:
+                pass
+            else:
+                _nchunk = 64  # Number of material indices per line
+                # Build a material mapping for this
+                mat2idx = {mt: i for i, mt in enumerate(my_mesh.blenMaterials)}  # (local-mat, tex) -> global index.
+                mats = my_mesh.blenMaterialList
+                if me.uv_textures.active and do_uvs:
+                    poly_tex = me.uv_textures.active.data
+                else:
+                    poly_tex = [None] * len(me.polygons)
+                _it_mat = (mats[p.material_index] for p in me.polygons)
+                _it_tex = (pt.image if pt else None for pt in poly_tex)  # WARNING - MULTI UV LAYER IMAGES NOT SUPPORTED
+                t_mti = (mat2idx[m, t] for m, t in zip(_it_mat, _it_tex))
+                
+                for chunk in grouper_exact(t_mti, _nchunk):
+                    for i in chunk:
+                        fbxSDKExport.add_mat_index(i)             
+            
         # add meshes here to clear because they are not used anywhere.
     meshes_to_clear = []
     
@@ -444,10 +491,15 @@ def save_single(operator, scene, filepath="",
         if ob_base.dupli_list:
             ob_base.dupli_list_clear()
     
+    materials = [(sane_matname(mat_tex_pair), mat_tex_pair) for mat_tex_pair in materials]
+    textures = [(sane_texname(tex), tex) for tex in textures if tex]
+    materials.sort(key=lambda m: m[0])  # sort by name
+    textures.sort(key=lambda m: m[0])    
         
     # sanity checks
     try:
         assert(not (ob_meshes and ('MESH' not in object_types)))
+        assert(not (materials and ('MESH' not in object_types)))
         
     except AssertionError:
         import traceback
@@ -456,6 +508,11 @@ def save_single(operator, scene, filepath="",
     for my_mesh in ob_meshes:
         write_mesh(my_mesh)
         
+    for matname, (mat, tex) in materials:
+        write_material(matname, mat)  # We only need to have a material per image pair, but no need to write any image info into the material (dumb fbx standard)        
+    
+    fbxSDKExport.Print()
+    
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
     
     return {'FINISHED'}
