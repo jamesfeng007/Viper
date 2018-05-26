@@ -690,6 +690,8 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         layout.prop(self, "use_mesh_modifiers")
         layout.prop(self, "mesh_smooth_type")
         layout.prop(self, "use_mesh_edges")
+        layout.prop(self, "axis_forward")
+        layout.prop(self, "axis_up")
         sub = layout.row()
         sub.prop(self, "use_tspace")
         

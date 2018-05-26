@@ -426,7 +426,6 @@ def save_single(operator, scene, filepath="",
 
         matrix_mod is only used for bones at the moment
         """
-        print(matrix)
         loc, rot, scale, matrix, matrix_rot = object_tx(ob, loc, matrix, matrix_mod)
         
         return loc, rot, scale, matrix, matrix_rot
@@ -448,6 +447,22 @@ def save_single(operator, scene, filepath="",
         fbx_rot = Vector3(rot[0], rot[1], rot[2])
         fbx_scale = Vector3(scale[0], scale[1], scale[2])
         fbxSDKExport.add_bone(c_char_p(my_bone.fbxName.encode('utf-8')), byref(fbx_loc), byref(fbx_rot), byref(fbx_scale))
+        
+    def write_null(my_null=None, fbxName=None, fbxType="Null", fbxTypeFlags="Null"):
+        if not fbxName:
+            fbxName = my_null.fbxName
+            
+        if my_null:
+            loc, rot, scale, matrix, matrix_rot = write_object_props(my_null.blenObject, None, my_null.parRelMatrix())
+        else:
+            loc, rot, scale, matrix, matrix_rot = write_object_props()
+            
+        fbx_loc = Vector3(loc[0], loc[1], loc[2])
+        rot = tuple_rad_to_deg(rot)
+        fbx_rot = Vector3(rot[0], rot[1], rot[2])
+        fbx_scale = Vector3(scale[0], scale[1], scale[2])
+        fbxSDKExport.add_bone(c_char_p(fbxName.encode('utf-8')), byref(fbx_loc), byref(fbx_rot), byref(fbx_scale))
+        
 
     def write_material(matname, mat):
         if mat:
@@ -494,7 +509,7 @@ def save_single(operator, scene, filepath="",
         transform_matrix = (global_bone_matrix.inverted() * global_mesh_matrix)
         
         global_bone_matrix_transp = global_bone_matrix.transposed()
-        transform_matrix_transp = transform_matrix.transposed();
+        transform_matrix_transp = global_mesh_matrix.transposed();
         
         fbx_transform_matrix = Mat4x4(transform_matrix_transp[0][0], transform_matrix_transp[0][1], transform_matrix_transp[0][2], transform_matrix_transp[0][3], 
                                       transform_matrix_transp[1][0], transform_matrix_transp[1][1], transform_matrix_transp[1][2], transform_matrix_transp[1][3], 
@@ -519,7 +534,6 @@ def save_single(operator, scene, filepath="",
         do_textures = bool([t for t in my_mesh.blenTextures if t is not None])
         do_uvs = bool(me.uv_layers)
         
-        print("mesh")
         loc, rot, scale, matrix, matrix_rot = write_object_tx(my_mesh.blenObject, None, my_mesh.parRelMatrix())
         rot = tuple_rad_to_deg(rot)       
         
@@ -939,6 +953,9 @@ def save_single(operator, scene, filepath="",
         import traceback
         traceback.print_exc()
         
+    #for my_arm in ob_arms:
+        #write_null(my_arm, fbxType="Limb", fbxTypeFlags="Skeleton")
+        
     for my_mesh in ob_meshes:
         write_mesh(my_mesh)
 
@@ -966,10 +983,10 @@ def save_single(operator, scene, filepath="",
             fbxSDKExport.add_bone_child(c_char_p(my_bone.fbxName.encode('utf-8')), c_char_p(my_bone.parent.fbxName.encode('utf-8')))
         #else:
             # the armature object is written as an empty and all root level bones connect to it
-            #fw('\n\tConnect: "OO", "Model::%s", "Model::%s"' % (my_bone.fbxName, my_bone.fbxArm.fbxName))    
+            #fbxSDKExport.add_bone_child(c_char_p(my_bone.fbxName.encode('utf-8')), c_char_p(my_bone.fbxArm.fbxName.encode('utf-8')))
     
     #fbxSDKExport.print_skeleton()
-    fbxSDKExport.print_mesh()
+    #fbxSDKExport.print_mesh()
     
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
     

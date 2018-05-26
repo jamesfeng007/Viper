@@ -89,20 +89,14 @@ bool Foo::FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonN
 	FbxAMatrix aTrans = FbxAMatrix(pTranslation, pRotation, pScaling);
 	lCluster->SetTransformMatrix(aTrans);
 
-
-
-	Mat4x4 transformL = subDeformer.transformLink;
-	FbxMatrix transfL = FbxMatrix(transformL.x0, transformL.x1, transformL.x2, transformL.x3,
-		transformL.y0, transformL.y1, transformL.y2, transformL.y3,
-		transformL.z0, transformL.z1, transformL.z2, transformL.z3,
-		transformL.w0, transformL.w1, transformL.w2, transformL.w3);
-	FbxVector4 pTranslationL;
-	FbxVector4 pRotationL;
-	FbxVector4 pShearingL;
-	FbxVector4 pScalingL;
-	transfL.GetElements(pTranslationL, pRotationL, pShearingL, pScalingL, pSign);
-	FbxAMatrix aTransL = FbxAMatrix(pTranslationL, pRotationL, pScalingL);
-	lCluster->SetTransformLinkMatrix(aTransL);
+	transform = subDeformer.transformLink;
+	transf = FbxMatrix(transform.x0, transform.x1, transform.x2, transform.x3,
+		transform.y0, transform.y1, transform.y2, transform.y3,
+		transform.z0, transform.z1, transform.z2, transform.z3,
+		transform.w0, transform.w1, transform.w2, transform.w3);
+	transf.GetElements(pTranslation, pRotation, pShearing, pScaling, pSign);
+	aTrans = FbxAMatrix(pTranslation, pRotation, pScaling);
+	lCluster->SetTransformLinkMatrix(aTrans);
 
 	lSkin->AddCluster(lCluster);
 

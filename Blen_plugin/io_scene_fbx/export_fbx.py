@@ -605,7 +605,6 @@ def save_single(operator, scene, filepath="",
 			Property: "QuaternionInterpolate", "bool", "",0
 			Property: "Visibility", "Visibility", "A+",1''')
 
-        print(matrix)
         loc, rot, scale, matrix, matrix_rot = write_object_tx(ob, loc, matrix, matrix_mod)
 
         # Rotation order, note, for FBX files Iv loaded normal order is 1
@@ -703,7 +702,6 @@ def save_single(operator, scene, filepath="",
     # -------------------------------------------- Armatures
     #def write_bone(bone, name, matrix_mod):
     def write_bone(my_bone):
-        print("bone name: %s" % my_bone.fbxName)
         fw('\n\tModel: "Model::%s", "Limb" {' % my_bone.fbxName)
         fw('\n\t\tVersion: 232')
 
@@ -1091,7 +1089,6 @@ def save_single(operator, scene, filepath="",
         if not fbxName:
             fbxName = my_null.fbxName
 
-        print("null name: %s" % fbxName)
         fw('\n\tModel: "Model::%s", "%s" {' % (fbxName, fbxType))
         fw('\n\t\tVersion: 232')
 
@@ -1394,7 +1391,6 @@ def save_single(operator, scene, filepath="",
 
         # convert into lists once.
 
-        print("mesh name: %s" % my_mesh.fbxName)
         poseMatrix = write_object_props(my_mesh.blenObject, None, my_mesh.parRelMatrix())[3]
 
         # Calculate the global transform for the mesh in the bind pose the same way we do
