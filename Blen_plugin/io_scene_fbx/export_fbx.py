@@ -549,10 +549,12 @@ def save_single(operator, scene, filepath="",
         matrix_mod is only used for bones at the moment
         """
         loc, rot, scale, matrix, matrix_rot = object_tx(ob, loc, matrix, matrix_mod)
+  
 
         fw('\n\t\t\tProperty: "Lcl Translation", "Lcl Translation", "A+",%.15f,%.15f,%.15f' % loc)
         fw('\n\t\t\tProperty: "Lcl Rotation", "Lcl Rotation", "A+",%.15f,%.15f,%.15f' % tuple_rad_to_deg(rot))
-        fw('\n\t\t\tProperty: "Lcl Scaling", "Lcl Scaling", "A+",%.15f,%.15f,%.15f' % scale)
+        fw('\n\t\t\tProperty: "Lcl Scaling", "Lcl Scaling", "A+",%.15f,%.15f,%.15f' % scale)     
+        
         return loc, rot, scale, matrix, matrix_rot
 
     def get_constraints(ob=None):
@@ -603,6 +605,7 @@ def save_single(operator, scene, filepath="",
 			Property: "QuaternionInterpolate", "bool", "",0
 			Property: "Visibility", "Visibility", "A+",1''')
 
+        print(matrix)
         loc, rot, scale, matrix, matrix_rot = write_object_tx(ob, loc, matrix, matrix_mod)
 
         # Rotation order, note, for FBX files Iv loaded normal order is 1
@@ -700,6 +703,7 @@ def save_single(operator, scene, filepath="",
     # -------------------------------------------- Armatures
     #def write_bone(bone, name, matrix_mod):
     def write_bone(my_bone):
+        print("bone name: %s" % my_bone.fbxName)
         fw('\n\tModel: "Model::%s", "Limb" {' % my_bone.fbxName)
         fw('\n\t\tVersion: 232')
 
@@ -1087,6 +1091,7 @@ def save_single(operator, scene, filepath="",
         if not fbxName:
             fbxName = my_null.fbxName
 
+        print("null name: %s" % fbxName)
         fw('\n\tModel: "Model::%s", "%s" {' % (fbxName, fbxType))
         fw('\n\t\tVersion: 232')
 
@@ -1389,6 +1394,7 @@ def save_single(operator, scene, filepath="",
 
         # convert into lists once.
 
+        print("mesh name: %s" % my_mesh.fbxName)
         poseMatrix = write_object_props(my_mesh.blenObject, None, my_mesh.parRelMatrix())[3]
 
         # Calculate the global transform for the mesh in the bind pose the same way we do
@@ -1417,15 +1423,7 @@ def save_single(operator, scene, filepath="",
         fw('\n\t\tVertices: ')
         _nchunk = 12  # Number of coordinates per line.
         t_co = [None] * len(me.vertices) * 3
-
-        #for ve in iter(me.vertices.values()):
-            #print(ve)
-     
         me.vertices.foreach_get("co", t_co)
-
-        #for chunk in grouper_exact(t_co, _nchunk):
-            #print(chunk)
-
         fw(',\n\t\t          '.join(','.join('%.6f' % co for co in chunk) for chunk in grouper_exact(t_co, _nchunk)))
         del t_co
 
@@ -1437,7 +1435,6 @@ def save_single(operator, scene, filepath="",
         me.loops.foreach_get("vertex_index", t_vi)
         t_ls = [None] * len(me.polygons)
         me.polygons.foreach_get("loop_start", t_ls)
-
         if t_ls != sorted(t_ls):
             print("Error: polygons and loops orders do not match!")
         for ls in t_ls:
@@ -1563,12 +1560,9 @@ def save_single(operator, scene, filepath="",
                 tex2idx = {None: -1}
                 tex2idx.update({tex: i for i, tex in enumerate(my_mesh.blenTextures)})
 
-
             for uvindex, (uvlayer, uvtexture) in enumerate(zip(uvlayers, uvtextures)):
                 uvlayer.data.foreach_get("uv", t_uv)
-
                 uvco = tuple(zip(*[iter(t_uv)] * 2))
-
                 fw('\n\t\tLayerElementUV: %d {'
                    '\n\t\t\tVersion: 101'
                    '\n\t\t\tName: "%s"'
@@ -1576,12 +1570,10 @@ def save_single(operator, scene, filepath="",
                    '\n\t\t\tReferenceInformationType: "IndexToDirect"'
                    '\n\t\t\tUV: ' % (uvindex, uvlayer.name))
                 uv2idx = tuple(set(uvco))
-
                 fw(',\n\t\t\t    '
                    ''.join(','.join('%.6f,%.6f' % uv for uv in chunk) for chunk in grouper_exact(uv2idx, _nchunk)))
                 fw('\n\t\t\tUVIndex: ')
                 uv2idx = {uv: idx for idx, uv in enumerate(uv2idx)}
-                                   
                 fw(',\n\t\t\t         '
                    ''.join(','.join('%d' % uv2idx[uv] for uv in chunk) for chunk in grouper_exact(uvco, _nchunk_idx)))
                 fw('\n\t\t}')
@@ -1639,9 +1631,6 @@ def save_single(operator, scene, filepath="",
                 _it_mat = (mats[p.material_index] for p in me.polygons)
                 _it_tex = (pt.image if pt else None for pt in poly_tex)  # WARNING - MULTI UV LAYER IMAGES NOT SUPPORTED
                 t_mti = (mat2idx[m, t] for m, t in zip(_it_mat, _it_tex))
-                
-
-                
                 fw(',\n\t\t\t           '
                    ''.join(','.join('%d' % i for i in chunk) for chunk in grouper_exact(t_mti, _nchunk)))
             fw('\n\t\t}')

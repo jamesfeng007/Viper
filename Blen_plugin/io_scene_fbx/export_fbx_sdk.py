@@ -1,13 +1,13 @@
 import os
 import time
 import math  # math.pi
-from ctypes import c_char_p
+from ctypes import c_char_p, byref
 
 import bpy
 from mathutils import Vector, Matrix
 from print_util import PrintHelper
 
-from fbx_export import FBXExport
+from fbx_export import FBXExport, Vector3, Mat4x4, Vector4
 
 def grouper_exact(it, chunk_size):
     """
@@ -130,6 +130,49 @@ def sane_takename(data):
 def sane_groupname(data):
     return sane_name(data, sane_name_mapping_group)
 
+# ob must be OB_MESH
+def BPyMesh_meshWeight2List(ob, me):
+    """ Takes a mesh and return its group names and a list of lists, one list per vertex.
+    aligning the each vert list with the group names, each list contains float value for the weight.
+    These 2 lists can be modified and then used with list2MeshWeight to apply the changes.
+    """
+
+    # Clear the vert group.
+    groupNames = [g.name for g in ob.vertex_groups]
+    len_groupNames = len(groupNames)
+
+    if not len_groupNames:
+        # no verts? return a vert aligned empty list
+        return [[] for i in range(len(me.vertices))], []
+    else:
+        vWeightList = [[0.0] * len_groupNames for i in range(len(me.vertices))]
+
+    for i, v in enumerate(me.vertices):
+        for g in v.groups:
+            # possible weights are out of range
+            index = g.group
+            if index < len_groupNames:
+                vWeightList[i][index] = g.weight
+
+    return groupNames, vWeightList
+
+def meshNormalizedWeights(ob, me):
+    groupNames, vWeightList = BPyMesh_meshWeight2List(ob, me)
+
+    if not groupNames:
+        return [], []
+
+    for i, vWeights in enumerate(vWeightList):
+        tot = 0.0
+        for w in vWeights:
+            tot += w
+
+        if tot:
+            for j, w in enumerate(vWeights):
+                vWeights[j] = w / tot
+
+    return groupNames, vWeightList
+
 def save_single(operator, scene, filepath="",
         global_matrix=None,
         context_objects=None,
@@ -161,6 +204,95 @@ def save_single(operator, scene, filepath="",
     
     fbxSDKExport = FBXExport(5)
     
+    class my_bone_class(object):
+        __slots__ = ("blenName",
+                     "blenBone",
+                     "blenMeshes",
+                     "restMatrix",
+                     "parent",
+                     "blenName",
+                     "fbxName",
+                     "fbxArm",
+                     "__pose_bone",
+                     "__anim_poselist")
+
+        def __init__(self, blenBone, fbxArm):
+
+            # This is so 2 armatures dont have naming conflicts since FBX bones use object namespace
+            self.fbxName = sane_obname(blenBone)
+
+            self.blenName = blenBone.name
+            self.blenBone = blenBone
+            self.blenMeshes = {}  # fbxMeshObName : mesh
+            self.fbxArm = fbxArm
+            self.restMatrix = blenBone.matrix_local
+
+            # not used yet
+            #~ self.restMatrixInv = self.restMatrix.inverted()
+            #~ self.restMatrixLocal = None # set later, need parent matrix
+
+            self.parent = None
+
+            # not public
+            pose = fbxArm.blenObject.pose
+            self.__pose_bone = pose.bones[self.blenName]
+
+            # store a list if matrices here, (poseMatrix, head, tail)
+            # {frame:posematrix, frame:posematrix, ...}
+            self.__anim_poselist = {}
+
+        '''
+        def calcRestMatrixLocal(self):
+            if self.parent:
+                self.restMatrixLocal = self.restMatrix * self.parent.restMatrix.inverted()
+            else:
+                self.restMatrixLocal = self.restMatrix.copy()
+        '''
+        def setPoseFrame(self, f):
+            # cache pose info here, frame must be set beforehand
+
+            # Didnt end up needing head or tail, if we do - here it is.
+            '''
+            self.__anim_poselist[f] = (\
+                self.__pose_bone.poseMatrix.copy(),\
+                self.__pose_bone.head.copy(),\
+                self.__pose_bone.tail.copy() )
+            '''
+
+            self.__anim_poselist[f] = self.__pose_bone.matrix.copy()
+
+        def getPoseBone(self):
+            return self.__pose_bone
+
+        # get pose from frame.
+        def getPoseMatrix(self, f):  # ----------------------------------------------
+            return self.__anim_poselist[f]
+        '''
+        def getPoseHead(self, f):
+            #return self.__pose_bone.head.copy()
+            return self.__anim_poselist[f][1].copy()
+        def getPoseTail(self, f):
+            #return self.__pose_bone.tail.copy()
+            return self.__anim_poselist[f][2].copy()
+        '''
+        # end
+
+        def getAnimParRelMatrix(self, frame):
+            #arm_mat = self.fbxArm.matrixWorld
+            #arm_mat = self.fbxArm.parRelMatrix()
+            if not self.parent:
+                #return mtx4_z90 * (self.getPoseMatrix(frame) * arm_mat) # dont apply arm matrix anymore
+                return self.getPoseMatrix(frame) * mtx4_z90
+            else:
+                #return (mtx4_z90 * ((self.getPoseMatrix(frame) * arm_mat)))  *  (mtx4_z90 * (self.parent.getPoseMatrix(frame) * arm_mat)).inverted()
+                return (self.parent.getPoseMatrix(frame) * mtx4_z90).inverted() * ((self.getPoseMatrix(frame)) * mtx4_z90)
+
+        # we need thes because cameras and lights modified rotations
+        def getAnimParRelMatrixRot(self, frame):
+            return self.getAnimParRelMatrix(frame)
+
+        def flushAnimData(self):
+            self.__anim_poselist.clear()
     
     
     class my_object_generic(object):
@@ -232,7 +364,91 @@ def save_single(operator, scene, filepath="",
             return matrix_rot
 
     # ----------------------------------------------
+    def object_tx(ob, loc, matrix, matrix_mod=None):
+        """
+        Matrix mod is so armature objects can modify their bone matrices
+        """
+        if isinstance(ob, bpy.types.Bone):
+
+            # we know we have a matrix
+            # matrix = mtx4_z90 * (ob.matrix['ARMATURESPACE'] * matrix_mod)
+            matrix = ob.matrix_local * mtx4_z90  # dont apply armature matrix anymore
+
+            parent = ob.parent
+            if parent:
+                #par_matrix = mtx4_z90 * (parent.matrix['ARMATURESPACE'] * matrix_mod)
+                par_matrix = parent.matrix_local * mtx4_z90  # dont apply armature matrix anymore
+                matrix = par_matrix.inverted() * matrix
+
+            loc, rot, scale = matrix.decompose()
+            matrix_rot = rot.to_matrix()
+
+            loc = tuple(loc)
+            rot = tuple(rot.to_euler())  # quat -> euler
+            scale = tuple(scale)
+
+        else:
+            # This is bad because we need the parent relative matrix from the fbx parent (if we have one), dont use anymore
+            #if ob and not matrix: matrix = ob.matrix_world * global_matrix
+            if ob and not matrix:
+                raise Exception("error: this should never happen!")
+
+            matrix_rot = matrix
+            #if matrix:
+            #    matrix = matrix_scale * matrix
+
+            if matrix:
+                loc, rot, scale = matrix.decompose()
+                matrix_rot = rot.to_matrix()
+
+                # Lamps need to be rotated
+                if ob and ob.type == 'LAMP':
+                    matrix_rot = matrix_rot * mtx_x90
+                elif ob and ob.type == 'CAMERA':
+                    y = matrix_rot * Vector((0.0, 1.0, 0.0))
+                    matrix_rot = Matrix.Rotation(math.pi / 2.0, 3, y) * matrix_rot
+                # else do nothing.
+
+                loc = tuple(loc)
+                rot = tuple(matrix_rot.to_euler())
+                scale = tuple(scale)
+            else:
+                if not loc:
+                    loc = 0.0, 0.0, 0.0
+                scale = 1.0, 1.0, 1.0
+                rot = 0.0, 0.0, 0.0
+
+        return loc, rot, scale, matrix, matrix_rot
     
+    def write_object_tx(ob, loc, matrix, matrix_mod=None):
+        """
+        We have loc to set the location if non blender objects that have a location
+
+        matrix_mod is only used for bones at the moment
+        """
+        print(matrix)
+        loc, rot, scale, matrix, matrix_rot = object_tx(ob, loc, matrix, matrix_mod)
+        
+        return loc, rot, scale, matrix, matrix_rot
+    
+    def write_object_props(ob=None, loc=None, matrix=None, matrix_mod=None, pose_bone=None):
+        
+        loc, rot, scale, matrix, matrix_rot = write_object_tx(ob, loc, matrix, matrix_mod)
+        
+        return loc, rot, scale, matrix, matrix_rot
+    
+    def write_bone(my_bone):
+        #~ poseMatrix = write_object_props(my_bone.blenBone, None, None, my_bone.fbxArm.parRelMatrix())[3]
+        loc, rot, scale, matrix, matrix_rot = write_object_props(my_bone.blenBone, pose_bone=my_bone.getPoseBone())  # dont apply bone matrices anymore
+        
+        global_matrix_bone = (my_bone.fbxArm.matrixWorld * my_bone.restMatrix) * mtx4_z90
+        
+        fbx_loc = Vector3(loc[0], loc[1], loc[2])
+        rot = tuple_rad_to_deg(rot)
+        fbx_rot = Vector3(rot[0], rot[1], rot[2])
+        fbx_scale = Vector3(scale[0], scale[1], scale[2])
+        fbxSDKExport.add_bone(c_char_p(my_bone.fbxName.encode('utf-8')), byref(fbx_loc), byref(fbx_rot), byref(fbx_scale))
+
     def write_material(matname, mat):
         if mat:
             mat_shadeless = mat.use_shadeless
@@ -248,14 +464,69 @@ def save_single(operator, scene, filepath="",
             mat_shader = 'Phong'            
         
         fbxSDKExport.add_material(c_char_p(matname.encode('utf-8')), c_char_p(mat_shader.encode('utf-8')))
+        
+    def write_sub_deformer_skin(my_mesh, my_bone, weights):
+        if my_mesh.fbxBoneParent:
+            if my_mesh.fbxBoneParent == my_bone:
+                # TODO - this is a bit lazy, we could have a simple write loop
+                # for this case because all weights are 1.0 but for now this is ok
+                # Parent Bones arent used all that much anyway.
+                vgroup_data = [(j, 1.0) for j in range(len(my_mesh.blenData.vertices))]
+            else:
+                # This bone is not a parent of this mesh object, no weights
+                vgroup_data = []
+
+        else:
+            # Normal weight painted mesh
+            if my_bone.blenName in weights[0]:
+                # Before we used normalized weight list
+                group_index = weights[0].index(my_bone.blenName)
+                vgroup_data = [(j, weight[group_index]) for j, weight in enumerate(weights[1]) if weight[group_index]]
+            else:
+                vgroup_data = []
+                
+        for vg in vgroup_data:
+            fbxSDKExport.add_sub_deformer_index(c_char_p(my_mesh.fbxName.encode('utf-8')), c_char_p(my_bone.fbxName.encode('utf-8')), vg[0])
+            fbxSDKExport.add_sub_deformer_weight(c_char_p(my_mesh.fbxName.encode('utf-8')), c_char_p(my_bone.fbxName.encode('utf-8')), vg[1])
+            
+        global_bone_matrix = (my_bone.fbxArm.matrixWorld * my_bone.restMatrix) * mtx4_z90
+        global_mesh_matrix = my_mesh.matrixWorld
+        transform_matrix = (global_bone_matrix.inverted() * global_mesh_matrix)
+        
+        global_bone_matrix_transp = global_bone_matrix.transposed()
+        transform_matrix_transp = transform_matrix.transposed();
+        
+        fbx_transform_matrix = Mat4x4(transform_matrix_transp[0][0], transform_matrix_transp[0][1], transform_matrix_transp[0][2], transform_matrix_transp[0][3], 
+                                      transform_matrix_transp[1][0], transform_matrix_transp[1][1], transform_matrix_transp[1][2], transform_matrix_transp[1][3], 
+                                      transform_matrix_transp[2][0], transform_matrix_transp[2][1], transform_matrix_transp[2][2], transform_matrix_transp[2][3], 
+                                      transform_matrix_transp[3][0], transform_matrix_transp[3][1], transform_matrix_transp[3][2], transform_matrix_transp[3][3])
+        #fbx_quat = Vector4(transform_quat[1], transform_quat[2], transform_quat[3], transform_quat[0])
+        fbx_quat = Vector4(0, 0, 0, 0)
+        fbxSDKExport.set_sub_deformer_transform(c_char_p(my_mesh.fbxName.encode('utf-8')), c_char_p(my_bone.fbxName.encode('utf-8')), 
+                                                byref(fbx_transform_matrix), byref(fbx_quat))
+        
+        fbx_global_bone_matrix = Mat4x4(global_bone_matrix_transp[0][0], global_bone_matrix_transp[0][1], global_bone_matrix_transp[0][2], global_bone_matrix_transp[0][3], 
+                                      global_bone_matrix_transp[1][0], global_bone_matrix_transp[1][1], global_bone_matrix_transp[1][2], global_bone_matrix_transp[1][3], 
+                                      global_bone_matrix_transp[2][0], global_bone_matrix_transp[2][1], global_bone_matrix_transp[2][2], global_bone_matrix_transp[2][3], 
+                                      global_bone_matrix_transp[3][0], global_bone_matrix_transp[3][1], global_bone_matrix_transp[3][2], global_bone_matrix_transp[3][3])
+        fbxSDKExport.set_sub_deformer_transform_link(c_char_p(my_mesh.fbxName.encode('utf-8')), c_char_p(my_bone.fbxName.encode('utf-8')), 
+                                                     byref(fbx_global_bone_matrix))
     
     def write_mesh(my_mesh):
         me = my_mesh.blenData
-        do_uvs = bool(me.uv_layers)
+        
         do_materials = bool([m for m in my_mesh.blenMaterials if m is not None])
         do_textures = bool([t for t in my_mesh.blenTextures if t is not None])
+        do_uvs = bool(me.uv_layers)
         
-        fbxSDKExport.set_mesh_name(c_char_p(my_mesh.fbxName.encode('utf-8')))
+        print("mesh")
+        loc, rot, scale, matrix, matrix_rot = write_object_tx(my_mesh.blenObject, None, my_mesh.parRelMatrix())
+        rot = tuple_rad_to_deg(rot)       
+        
+        fbx_loc = Vector3(loc[0], loc[1], loc[2])
+        fbx_rot = Vector3(rot[0], rot[1], rot[2])
+        fbx_scale = Vector3(scale[0], scale[1], scale[2])
+        fbxSDKExport.set_mesh_property(c_char_p(my_mesh.fbxName.encode('utf-8')), byref(fbx_loc), byref(fbx_rot), byref(fbx_scale))
         
         _nchunk = 3
         t_co = [None] * len(me.vertices) * 3
@@ -363,9 +634,32 @@ def save_single(operator, scene, filepath="",
     
     ob_meshes = []
     
+    ob_bones = []
+    ob_arms = []
+    
+    # List of types that have blender objects (not bones)
+    ob_all_typegroups = [ob_meshes, ob_arms]    
+    
     groups = []  # blender groups, only add ones that have objects in the selections
     materials = set()  # (mat, image) items
     textures = set()
+    
+    if 'ARMATURE' in object_types:
+        # This is needed so applying modifiers dosnt apply the armature deformation, its also needed
+        # ...so mesh objects return their rest worldspace matrix when bone-parents are exported as weighted meshes.
+        # set every armature to its rest, backup the original values so we done mess up the scene
+        ob_arms_orig_rest = [arm.pose_position for arm in bpy.data.armatures]
+
+        for arm in bpy.data.armatures:
+            arm.pose_position = 'REST'
+
+        if ob_arms_orig_rest:
+            for ob_base in bpy.data.objects:
+                if ob_base.type == 'ARMATURE':
+                    ob_base.update_tag()
+
+            # This causes the makeDisplayList command to effect the mesh
+            scene.frame_set(scene.frame_current)    
         
     for ob_base in context_objects:
 
@@ -414,6 +708,12 @@ def save_single(operator, scene, filepath="",
                         mats = me.materials
 
                 if me:
+#                     # This WILL modify meshes in blender if use_mesh_modifiers is disabled.
+#                     # so strictly this is bad. but only in rare cases would it have negative results
+#                     # say with dupliverts the objects would rotate a bit differently
+#                     if EXP_MESH_HQ_NORMALS:
+#                         BPyMesh.meshCalcNormals(me) # high quality normals nice for realtime engines.
+                    
 
                     if not mats:
                         mats = [None]
@@ -490,6 +790,139 @@ def save_single(operator, scene, filepath="",
         # not forgetting to free dupli_list
         if ob_base.dupli_list:
             ob_base.dupli_list_clear()
+            
+    if 'ARMATURE' in object_types:
+        # now we have the meshes, restore the rest arm position
+        for i, arm in enumerate(bpy.data.armatures):
+            arm.pose_position = ob_arms_orig_rest[i]
+
+        if ob_arms_orig_rest:
+            for ob_base in bpy.data.objects:
+                if ob_base.type == 'ARMATURE':
+                    ob_base.update_tag()
+            # This causes the makeDisplayList command to effect the mesh
+            scene.frame_set(scene.frame_current)
+
+    del tmp_ob_type, context_objects
+
+    # now we have collected all armatures, add bones
+    for i, ob in enumerate(ob_arms):
+
+        ob_arms[i] = my_arm = my_object_generic(ob)
+
+        my_arm.fbxBones = []
+        my_arm.blenData = ob.data
+        if ob.animation_data:
+            my_arm.blenAction = ob.animation_data.action
+        else:
+            my_arm.blenAction = None
+        my_arm.blenActionList = []
+
+        # fbxName, blenderObject, my_bones, blenderActions
+        #ob_arms[i] = fbxArmObName, ob, arm_my_bones, (ob.action, [])
+
+        if use_armature_deform_only:
+            # tag non deforming bones that have no deforming children
+            deform_map = dict.fromkeys(my_arm.blenData.bones, False)
+            for bone in my_arm.blenData.bones:
+                if bone.use_deform:
+                    deform_map[bone] = True
+                    # tag all parents, even ones that are not deform since their child _is_
+                    for parent in bone.parent_recursive:
+                        deform_map[parent] = True
+
+        for bone in my_arm.blenData.bones:
+
+            if use_armature_deform_only:
+                # if this bone doesnt deform, and none of its children deform, skip it!
+                if not deform_map[bone]:
+                    continue
+
+            my_bone = my_bone_class(bone, my_arm)
+            my_arm.fbxBones.append(my_bone)
+            ob_bones.append(my_bone)
+
+        if use_armature_deform_only:
+            del deform_map
+
+    # add the meshes to the bones and replace the meshes armature with own armature class
+    #for obname, ob, mtx, me, mats, arm, armname in ob_meshes:
+    for my_mesh in ob_meshes:
+        # Replace
+        # ...this could be sped up with dictionary mapping but its unlikely for
+        # it ever to be a bottleneck - (would need 100+ meshes using armatures)
+        if my_mesh.fbxArm:
+            for my_arm in ob_arms:
+                if my_arm.blenObject == my_mesh.fbxArm:
+                    my_mesh.fbxArm = my_arm
+                    break
+
+        for my_bone in ob_bones:
+
+            # The mesh uses this bones armature!
+            if my_bone.fbxArm == my_mesh.fbxArm:
+                if my_bone.blenBone.use_deform:
+                    my_bone.blenMeshes[my_mesh.fbxName] = me
+
+                # parent bone: replace bone names with our class instances
+                # my_mesh.fbxBoneParent is None or a blender bone name initialy, replacing if the names match.
+                if my_mesh.fbxBoneParent == my_bone.blenName:
+                    my_mesh.fbxBoneParent = my_bone
+
+    bone_deformer_count = 0  # count how many bones deform a mesh
+    my_bone_blenParent = None
+    for my_bone in ob_bones:
+        my_bone_blenParent = my_bone.blenBone.parent
+        if my_bone_blenParent:
+            for my_bone_parent in ob_bones:
+                # Note 2.45rc2 you can compare bones normally
+                if my_bone_blenParent.name == my_bone_parent.blenName and my_bone.fbxArm == my_bone_parent.fbxArm:
+                    my_bone.parent = my_bone_parent
+                    break
+
+        # Not used at the moment
+        # my_bone.calcRestMatrixLocal()
+        bone_deformer_count += len(my_bone.blenMeshes)
+
+    del my_bone_blenParent
+    
+    # Build blenObject -> fbxObject mapping
+    # this is needed for groups as well as fbxParenting
+    bpy.data.objects.tag(False)
+
+    # using a list of object names for tagging (Arystan)
+
+    tmp_obmapping = {}
+    for ob_generic in ob_all_typegroups:
+        for ob_base in ob_generic:
+            ob_base.blenObject.tag = True
+            tmp_obmapping[ob_base.blenObject] = ob_base
+
+    # Build Groups from objects we export
+    for blenGroup in bpy.data.groups:
+        fbxGroupName = None
+        for ob in blenGroup.objects:
+            if ob.tag:
+                if fbxGroupName is None:
+                    fbxGroupName = sane_groupname(blenGroup)
+                    groups.append((fbxGroupName, blenGroup))
+
+                tmp_obmapping[ob].fbxGroupNames.append(fbxGroupName)  # also adds to the objects fbxGroupNames
+
+    groups.sort()  # not really needed
+
+    # Assign parents using this mapping
+    for ob_generic in ob_all_typegroups:
+        for my_ob in ob_generic:
+            parent = my_ob.blenObject.parent
+            if parent and parent.tag:  # does it exist and is it in the mapping
+                my_ob.fbxParent = tmp_obmapping[parent]
+
+    del tmp_obmapping
+    # Finished finding groups we use
+
+    # == WRITE OBJECTS TO THE FILE ==
+    # == From now on we are building the FBX file from the information collected above (JCB)    
     
     materials = [(sane_matname(mat_tex_pair), mat_tex_pair) for mat_tex_pair in materials]
     textures = [(sane_texname(tex), tex) for tex in textures if tex]
@@ -500,6 +933,7 @@ def save_single(operator, scene, filepath="",
     try:
         assert(not (ob_meshes and ('MESH' not in object_types)))
         assert(not (materials and ('MESH' not in object_types)))
+        assert(not (textures and ('MESH' not in object_types)))
         
     except AssertionError:
         import traceback
@@ -507,13 +941,53 @@ def save_single(operator, scene, filepath="",
         
     for my_mesh in ob_meshes:
         write_mesh(my_mesh)
+
+    #for bonename, bone, obname, me, armob in ob_bones:
+    for my_bone in ob_bones:
+        write_bone(my_bone)        
         
     for matname, (mat, tex) in materials:
         write_material(matname, mat)  # We only need to have a material per image pair, but no need to write any image info into the material (dumb fbx standard)        
     
-    fbxSDKExport.Print()
+    for my_mesh in ob_meshes:
+        if my_mesh.fbxArm:
+            if my_mesh.fbxBoneParent:
+                weights = None
+            else:
+                weights = meshNormalizedWeights(my_mesh.blenObject, my_mesh.blenData)
+                
+            for my_bone in ob_bones:
+                if me in iter(my_bone.blenMeshes.values()):
+                    write_sub_deformer_skin(my_mesh, my_bone, weights)                            
+    
+    for my_bone in ob_bones:
+        # Always parent to armature now
+        if my_bone.parent:
+            fbxSDKExport.add_bone_child(c_char_p(my_bone.fbxName.encode('utf-8')), c_char_p(my_bone.parent.fbxName.encode('utf-8')))
+        #else:
+            # the armature object is written as an empty and all root level bones connect to it
+            #fw('\n\tConnect: "OO", "Model::%s", "Model::%s"' % (my_bone.fbxName, my_bone.fbxArm.fbxName))    
+    
+    #fbxSDKExport.print_skeleton()
+    fbxSDKExport.print_mesh()
     
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
+    
+    # XXX, shouldnt be global!
+    for mapping in (sane_name_mapping_ob,
+                    sane_name_mapping_ob_unique,
+                    sane_name_mapping_mat,
+                    sane_name_mapping_tex,
+                    sane_name_mapping_take,
+                    sane_name_mapping_group,
+                    ):
+        mapping.clear()
+    del mapping
+    
+    
+    del ob_arms[:]
+    del ob_bones[:]
+    del ob_meshes[:]
     
     return {'FINISHED'}
 

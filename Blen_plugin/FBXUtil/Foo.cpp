@@ -5,27 +5,147 @@
 Foo::Foo(int n)
 {
 	val = n;
-	mVertices = std::vector<Foo::Vertex>();
-	mNormals = std::vector<Foo::Normal>();
+	mVertices = std::vector<Foo::Vector3>();
+	mNormals = std::vector<Foo::Vector3>();
 	mIndices = std::vector<int>();
 	mLoopStart = std::vector<int>();
 	mSmoothing = std::vector<int>();
 	mUVInfos = std::map<int, LayerElementUVInfo>();
 	mMatIndices = std::vector<int>();
 	mMaterials = std::vector<Material>();
+	mBones = std::map<std::string, Bone>();
+	mDeformers = std::map<std::string, Deformer>();
 }
 
-bool Foo::CreateScene(FbxScene* pScene)
+bool Foo::BuildArmature(FbxScene* pScene, FbxNode*& pSkeletonNode)
 {
-	FbxNode* lRootNode = pScene->GetRootNode();
-	FbxNode* lNode = FbxNode::Create(pScene, mMeshName.c_str());
-	lRootNode->AddChild(lNode);
+	std::map<std::string, FbxNode*> reg = std::map<std::string, FbxNode*>();
 
-	FbxMesh* lMesh = FbxMesh::Create(pScene, mMeshName.c_str());
+	for (std::pair<std::string, Bone> _bone : mBones)
+	{
+		Bone bone = _bone.second;
+		FbxNode* pNode = FbxNode::Create(pScene, bone.boneName.c_str());
+		FbxSkeleton* lSkeleton = FbxSkeleton::Create(pScene, bone.boneName.c_str());
+		lSkeleton->SetSkeletonType(FbxSkeleton::eLimbNode);
+		pNode->SetNodeAttribute(lSkeleton);
+		pNode->LclTranslation.Set(FbxVector4(bone.lclTranslation.x, bone.lclTranslation.y, bone.lclTranslation.z));
+		pNode->LclRotation.Set(FbxVector4(bone.lclRotation.x, bone.lclRotation.y, bone.lclRotation.z));
+		pNode->LclScaling.Set(FbxVector4(bone.lclScaling.x, bone.lclScaling.y, bone.lclScaling.z));
+		reg.insert(make_pair(bone.boneName, pNode));
+	}
+
+	for (std::pair<std::string, Bone> _bone : mBones)
+	{
+		FbxNode* pChild = reg.at(_bone.second.boneName);
+		if (!_bone.second.parentName.empty())
+		{
+			FbxNode* pParent = reg.at(_bone.second.parentName);
+			pParent->AddChild(pChild);
+		}
+		else
+		{
+			pScene->GetRootNode()->AddChild(pChild);
+			pSkeletonNode = pChild;
+		}
+	}
+
+	return true;
+}
+
+bool Foo::FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode, FbxSkin* lSkin)
+{
+	if (pMeshNode == nullptr || pSkeletonNode == nullptr)
+	{
+		return false;
+	}
+
+	FbxCluster *lCluster = FbxCluster::Create(pScene, std::string(pSkeletonNode->GetName()).append("_Cluster").c_str());
+	lCluster->SetLink(pSkeletonNode);
+	lCluster->SetLinkMode(FbxCluster::eTotalOne);
+
+	SubDeformer subDeformer = GetSubDeformer(pMeshNode->GetName(), pSkeletonNode->GetName());
+	if (subDeformer.indexes.size() != subDeformer.weights.size())
+	{
+		return false;
+	}
+
+	size_t indexWeightCount = subDeformer.indexes.size();
+	for (int i = 0; i < indexWeightCount; ++i)
+	{
+		lCluster->AddControlPointIndex(subDeformer.indexes.at(i), subDeformer.weights.at(i));
+	}
+
+	Mat4x4 transform = subDeformer.transform;
+	FbxMatrix transf = FbxMatrix(transform.x0, transform.x1, transform.x2, transform.x3,
+		transform.y0, transform.y1, transform.y2, transform.y3,
+		transform.z0, transform.z1, transform.z2, transform.z3,
+		transform.w0, transform.w1, transform.w2, transform.w3);
+	FbxVector4 pTranslation;
+	FbxVector4 pRotation;
+	FbxVector4 pShearing;
+	FbxVector4 pScaling;
+	double pSign;
+	transf.GetElements(pTranslation, pRotation, pShearing, pScaling, pSign);
+	FbxAMatrix aTrans = FbxAMatrix(pTranslation, pRotation, pScaling);
+	lCluster->SetTransformMatrix(aTrans);
+
+
+
+	Mat4x4 transformL = subDeformer.transformLink;
+	FbxMatrix transfL = FbxMatrix(transformL.x0, transformL.x1, transformL.x2, transformL.x3,
+		transformL.y0, transformL.y1, transformL.y2, transformL.y3,
+		transformL.z0, transformL.z1, transformL.z2, transformL.z3,
+		transformL.w0, transformL.w1, transformL.w2, transformL.w3);
+	FbxVector4 pTranslationL;
+	FbxVector4 pRotationL;
+	FbxVector4 pShearingL;
+	FbxVector4 pScalingL;
+	transfL.GetElements(pTranslationL, pRotationL, pShearingL, pScalingL, pSign);
+	FbxAMatrix aTransL = FbxAMatrix(pTranslationL, pRotationL, pScalingL);
+	lCluster->SetTransformLinkMatrix(aTransL);
+
+	lSkin->AddCluster(lCluster);
+
+	int childCount = pSkeletonNode->GetChildCount();
+	for (int i = 0; i < childCount; ++i)
+	{
+		FillDeformer(pScene, pMeshNode, pSkeletonNode->GetChild(i), lSkin);
+	}
+
+	return true;
+}
+
+bool Foo::BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode)
+{
+	if (pMeshNode == nullptr || pSkeletonNode == nullptr)
+	{
+		return true;
+	}
+
+	FbxGeometry* lMeshAttribute = (FbxGeometry*)pMeshNode->GetNodeAttribute();
+	FbxSkin* lSkin = FbxSkin::Create(pScene, "lSkin");
+
+	if (!FillDeformer(pScene, pMeshNode, pSkeletonNode, lSkin))
+	{
+		return false;
+	}
+
+	lMeshAttribute->AddDeformer(lSkin);
+	return true;
+}
+
+bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
+{
+	if (mVertices.empty())
+	{
+		return true;
+	}
+
+	FbxMesh* lMesh = FbxMesh::Create(pScene, mMesh.mMeshName.c_str());
 
 	lMesh->InitControlPoints(static_cast<int>(mVertices.size()));
 	FbxVector4* lControlPoints = lMesh->GetControlPoints();
-	for (int i=0; i<mVertices.size(); ++i)
+	for (int i = 0; i < mVertices.size(); ++i)
 	{
 		lMesh->SetControlPointAt(FbxVector4(mVertices[i].x, mVertices[i].y, mVertices[i].z), i);
 	}
@@ -54,7 +174,7 @@ bool Foo::CreateScene(FbxScene* pScene)
 			lUVElement->GetIndexArray().Add(uvIndex);
 		}
 	}
-	
+
 	FbxGeometryElementMaterial* lMaterialElement = lMesh->CreateElementMaterial();
 	lMaterialElement->SetReferenceMode(FbxGeometryElement::eIndexToDirect);
 	lMaterialElement->SetMappingMode(FbxGeometryElement::eByPolygon);
@@ -67,7 +187,7 @@ bool Foo::CreateScene(FbxScene* pScene)
 	for (int i = 0; i < mLoopStart.size(); ++i)
 	{
 		int loopStart = mLoopStart[i];
-		int loopEnd = i < mLoopStart.size() - 1 ? mLoopStart[i + 1] - 1 : static_cast<int>(mIndices.size()) - 1;
+		size_t loopEnd = i < mLoopStart.size() - 1 ? mLoopStart[i + 1] - 1 : mIndices.size() - 1;
 		lMesh->BeginPolygon(mMatIndices.size() == 0 ? -1 : mMatIndices[i]);
 		for (int j = loopStart; j <= loopEnd; ++j)
 		{
@@ -82,7 +202,7 @@ bool Foo::CreateScene(FbxScene* pScene)
 		lSmoothingElement = lMesh->CreateElementSmoothing();
 		lSmoothingElement->SetReferenceMode(FbxLayerElement::eDirect);
 	}
-	
+
 	switch (mSmoothMode)
 	{
 	case 0:
@@ -103,7 +223,14 @@ bool Foo::CreateScene(FbxScene* pScene)
 		}
 	}
 
+	FbxNode* lRootNode = pScene->GetRootNode();
+	FbxNode* lNode = FbxNode::Create(pScene, mMesh.mMeshName.c_str());
+	lNode->LclTranslation.Set(FbxVector4(mMesh.lclTranslation.x, mMesh.lclTranslation.y, mMesh.lclTranslation.z));
+	lNode->LclRotation.Set(FbxVector4(mMesh.lclRotation.x, mMesh.lclRotation.y, mMesh.lclRotation.z));
+	lNode->LclScaling.Set(FbxVector4(mMesh.lclScaling.x, mMesh.lclScaling.y, mMesh.lclScaling.z));
+	lRootNode->AddChild(lNode);
 	lNode->SetNodeAttribute(lMesh);
+	pMeshNode = lNode;
 
 	for (Material mat : mMaterials)
 	{
@@ -117,6 +244,29 @@ bool Foo::CreateScene(FbxScene* pScene)
 	return true;
 }
 
+bool Foo::CreateScene(FbxScene* pScene)
+{
+	FbxNode* pMeshNode = nullptr;
+	FbxNode* pSkeletonNode = nullptr;
+
+	if (!BuildMesh(pScene, pMeshNode))
+	{
+		return false;
+	}
+
+	if (!BuildArmature(pScene, pSkeletonNode))
+	{
+		return false;
+	}
+
+	if (!BuildDeformer(pScene, pMeshNode, pSkeletonNode))
+	{
+		return false;
+	}
+
+	return true;
+}
+
 void Foo::CreateUVInfo(int uvIndex, char* name)
 {
 	Foo::LayerElementUVInfo uvInfo = LayerElementUVInfo(uvIndex, name);
@@ -125,12 +275,12 @@ void Foo::CreateUVInfo(int uvIndex, char* name)
 
 void Foo::AddVertex(float x, float y, float z)
 {
-	mVertices.push_back(Foo::Vertex(x, y, z));
+	mVertices.push_back(Foo::Vector3(x, y, z));
 }
 
 void Foo::AddNormal(float x, float y, float z)
 {
-	mNormals.push_back(Foo::Normal(x, y, z));
+	mNormals.push_back(Foo::Vector3(x, y, z));
 }
 
 void Foo::AddUV(int uvIndex, float x, float y)
@@ -168,9 +318,12 @@ void Foo::SetSmoothMode(int mode)
 	mSmoothMode = mode;
 }
 
-void Foo::SetMeshName(char* name)
+void Foo::SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca)
 {
-	mMeshName = std::string(name);
+	mMesh.mMeshName = std::string(name);
+	mMesh.lclTranslation = trans;
+	mMesh.lclRotation = rot;
+	mMesh.lclScaling = sca;
 }
 
 void Foo::AddMaterial(char* mName, char* sName)
@@ -179,11 +332,110 @@ void Foo::AddMaterial(char* mName, char* sName)
 	mMaterials.push_back(mat);
 }
 
-void Foo::Print()
+void Foo::AddBone(char* name, Vector3 lclTranslation, Vector3 lclRotation, Vector3 lclScaling)
 {
-	for (Foo::Vertex v : mVertices)
+	mBones.insert(make_pair(std::string(name), Bone(name, lclTranslation, lclRotation, lclScaling)));
+}
+
+void Foo::AddBoneChild(char* child, char* parent)
+{
+	Bone& parentB = mBones.at(std::string(parent));
+	Bone& childB = mBones.at(std::string(child));
+	childB.parentName = parentB.boneName;
+}
+
+Foo::SubDeformer& Foo::GetSubDeformer(const char* mName, const char* bName)
+{
+	std::string meshName = std::string(mName);
+	std::string boneName = std::string(bName);
+
+	std::map<std::string, Deformer>::iterator ite = mDeformers.find(meshName);
+	if (ite == mDeformers.end())
 	{
-		std::cout << "vertex[ " << v.x << ", " << v.y << ", " << v.z << "]" << std::endl;
+		mDeformers.insert(make_pair(meshName, Deformer(mName)));
+	}
+
+	std::map<std::string, SubDeformer>& subDeformers = mDeformers.at(meshName).subDeformers;
+	std::map<std::string, SubDeformer>::iterator ite2 = subDeformers.find(boneName);
+	if (ite2 == subDeformers.end())
+	{
+		subDeformers.insert(make_pair(boneName, SubDeformer(mName, bName)));
+	}
+
+	return subDeformers.at(boneName);
+}
+
+void Foo::SetSubDeformerTransformLink(char* mName, char* bName, Mat4x4 transformLink)
+{
+	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
+	subDeformer.transformLink = transformLink;
+}
+
+void Foo::SetSubDeformerTransform(char* mName, char* bName, Mat4x4 transform, Vector4 quat)
+{
+	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
+	subDeformer.transform = transform;
+	subDeformer.quat = quat;
+}
+
+void Foo::AddSubDeformerWeight(char* mName, char* bName, float weight)
+{
+	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
+	subDeformer.weights.push_back(weight);
+}
+
+void Foo::AddSubDeformerIndex(char* mName, char* bName, int index)
+{
+	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
+	subDeformer.indexes.push_back(index);
+	
+}
+
+void Foo::PrintSkeleton()
+{
+	for (std::pair<std::string, Foo::Bone> _bone : mBones)
+	{
+		const Foo::Bone& bone = _bone.second;
+		std::cout << "Bone name: " << _bone.first << " translation: " << bone.lclTranslation << " rotation: " 
+			<< bone.lclRotation << " scaling: " << bone.lclScaling << " parent: " << bone.parentName << std::endl;
+	}
+
+	for (std::pair<std::string, Deformer> _deformer : mDeformers)
+	{
+		const Deformer& deformer = _deformer.second;
+		std::cout << "deformer name: " << deformer.deformerName << std::endl;
+		for (std::pair<std::string, SubDeformer> _subDeformer : deformer.subDeformers)
+		{
+			const SubDeformer& subDeformer = _subDeformer.second;
+			std::cout << "subdeformer name: " << subDeformer.subDeformerName << std::endl;
+
+			std::cout << "subdeformer index[ ";
+			for (int ix : subDeformer.indexes)
+			{
+				std::cout << ix << ", ";
+			}
+			std::cout << " ]" << std::endl;
+
+			std::cout << "subdeformer weight[ ";
+			for (float ix : subDeformer.weights)
+			{
+				std::cout << ix << ", ";
+			}
+			std::cout << " ]" << std::endl;
+
+			std::cout << "transform:" << std::endl;
+			std::cout << subDeformer.transform << std::endl;
+			std::cout << "transformLink:" << std::endl;
+			std::cout << subDeformer.transformLink << std::endl;
+		}
+	}
+}
+
+void Foo::PrintMesh()
+{
+	for (Foo::Vector3 v : mVertices)
+	{
+		std::cout << "vertex[ " << v << " ]" << std::endl;
 	}
 
 	std::cout << "index[ ";
@@ -193,9 +445,9 @@ void Foo::Print()
 	}
 	std::cout << " ]" << std::endl;
 
-	for (Foo::Normal n : mNormals)
+	for (Foo::Vector3 n : mNormals)
 	{
-		std::cout << "normal[ " << n.x << ", " << n.y << ", " << n.z << "]" << std::endl;
+		std::cout << "normal[ " << n << " ]" << std::endl;
 	}
 
 	std::cout << "start[ ";
@@ -205,7 +457,8 @@ void Foo::Print()
 	}
 	std::cout << " ]" << std::endl;
 
-	std::cout << "mesh name: " << mMeshName << std::endl;
+	std::cout << "mesh name: " << mMesh.mMeshName << std::endl;
+	std::cout << "mesh translation: " << mMesh.lclTranslation << " rotation: " << mMesh.lclRotation << " scale: " << mMesh.lclScaling << std::endl;
 
 	std::cout << "smoothing mode:" << mSmoothMode << std::endl;
 	for (int s : mSmoothing)
@@ -271,6 +524,21 @@ bool Foo::Export(char* filePath)
 	return true;
 }
 
+std::ostream& operator<< (std::ostream &os, const Foo::Vector3& vec)
+{
+	os << "[ " << vec.x << ", " << vec.y << ", " << vec.z << "]";
+	return os;
+}
+
+std::ostream& operator<< (std::ostream &os, const Foo::Mat4x4& mat)
+{
+	os << "[ " << mat.x0 << ", " << mat.x1 << ", " << mat.x2 << ", " << mat.x3 << "]" << std::endl
+		<< "[ " << mat.y0 << ", " << mat.y1 << ", " << mat.y2 << ", " << mat.y3 << "]" << std::endl
+		<< "[ " << mat.z0 << ", " << mat.z1 << ", " << mat.z2 << ", " << mat.z3 << "]" << std::endl
+		<< "[ " << mat.w0 << ", " << mat.w1 << ", " << mat.w2 << ", " << mat.w3 << "]";
+	return os;
+}
+
 extern "C"
 {
 	DLLEXPORT Foo* Foo_new(int n) { return new Foo(n); }
@@ -284,8 +552,17 @@ extern "C"
 	DLLEXPORT void Foo_AddLoopStart(Foo* foo, int n) { foo->AddLoopStart(n); }
 	DLLEXPORT void Foo_AddSmoothing(Foo* foo, int s) { foo->AddSmoothing(s); }
 	DLLEXPORT void Foo_SetSmoothMode(Foo* foo, int m) { foo->SetSmoothMode(m); }
-	DLLEXPORT void Foo_SetMeshName(Foo* foo, char* name) { foo->SetMeshName(name); }
+	DLLEXPORT void Foo_SetMeshProperty(Foo* foo, char* name, Foo::Vector3 trans, Foo::Vector3 rot, Foo::Vector3 sca) 
+		{ foo->SetMeshProperty(name, trans, rot, sca); }
 	DLLEXPORT void Foo_AddMaterial(Foo* foo, char* mName, char* sName) { foo->AddMaterial(mName, sName); }
+	DLLEXPORT void Foo_AddBoneChild(Foo* foo, char* cName, char* pName) { foo->AddBoneChild(cName, pName); }
+	DLLEXPORT void Foo_AddBone(Foo* foo, char* name, Foo::Vector3 lclTranslation, Foo::Vector3 lclRotation, Foo::Vector3 lclScaling)
+		{ foo->AddBone(name, lclTranslation, lclRotation, lclScaling); }
+	DLLEXPORT void Foo_AddSubDeformerIndex(Foo* foo, char* mName, char* bName, int index) { foo->AddSubDeformerIndex(mName, bName, index); }
+	DLLEXPORT void Foo_AddSubDeformerWeight(Foo* foo, char* mName, char* bName, float weight) { foo->AddSubDeformerWeight(mName, bName, weight); }
+	DLLEXPORT void Foo_SetSubDeformerTransform(Foo* foo, char* mName, char* bName, Foo::Mat4x4 transf, Foo::Vector4 quat) { foo->SetSubDeformerTransform(mName, bName, transf, quat); }
+	DLLEXPORT void Foo_SetSubDeformerTransformLink(Foo* foo, char* mName, char* bName, Foo::Mat4x4 transfLink) { foo->SetSubDeformerTransformLink(mName, bName, transfLink); }
 	DLLEXPORT bool Foo_Export(Foo* foo, char* name) { return foo->Export(name); }
-	DLLEXPORT void Foo_Print(Foo* foo) { foo->Print(); }
+	DLLEXPORT void Foo_PrintMesh(Foo* foo) { foo->PrintMesh(); }
+	DLLEXPORT void Foo_PrintSkeleton(Foo* foo) { foo->PrintSkeleton(); }
 }
