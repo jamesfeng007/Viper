@@ -1,5 +1,6 @@
 #pragma once
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <map>
 #include <string>
@@ -11,6 +12,25 @@ class Foo
 {
 public:
 	Foo(int);
+
+	template<typename T>
+	struct Vector2
+	{
+		Vector2()
+		{
+
+		}
+
+		Vector2(T _x, T _y)
+			: x(_x), y(_y)
+		{
+
+		}
+
+		T x, y;
+	};
+
+	typedef Vector2<int> IntVector2;
 
 	struct Vector3
 	{
@@ -67,6 +87,23 @@ public:
 		float y0, y1, y2, y3;
 		float z0, z1, z2, z3;
 		float w0, w1, w2, w3;
+	};
+
+	struct Pose
+	{
+		Pose()
+		{
+
+		}
+
+		Pose(const char* name, Mat4x4 mat)
+			: poseNodeName(std::string(name)), poseTransform(mat)
+		{
+
+		}
+
+		std::string poseNodeName;
+		Mat4x4 poseTransform;
 	};
 
 	struct UV
@@ -143,6 +180,7 @@ public:
 		Vector3 lclTranslation;
 		Vector3 lclRotation;
 		Vector3 lclScaling;
+		std::vector<IntVector2> edges;
 	};
 
 	struct Bone
@@ -213,6 +251,85 @@ public:
 		std::map<std::string, SubDeformer> subDeformers;
 	};
 
+	struct Key
+	{
+		Key()
+			: frame(0.f), value(0.f)
+		{
+
+		}
+
+		Key(float f, float v)
+			: frame(f), value(v)
+		{
+
+		}
+
+		float frame;
+		float value;
+	};
+
+	struct Channel
+	{
+		Channel()
+			: defaultValue(0.0)
+		{
+			keys = std::vector<Key>();
+		}
+		double defaultValue;
+		std::vector<Key> keys;
+	};
+
+	enum ChannelType
+	{
+		T_X = 0,
+		T_Y,
+		T_Z,
+		R_X,
+		R_Y,
+		R_Z,
+		S_X,
+		S_Y,
+		S_Z,
+		ChannelMax
+	};
+
+	struct ModelAnim
+	{
+		ModelAnim()
+		{
+
+		}
+
+		ModelAnim(char* mName)
+			: modelName(std::string(mName))
+		{
+
+		}
+
+		std::string modelName;
+		Channel channels[ChannelMax];
+	};
+
+	struct Take
+	{
+		Take()
+		{
+			models = std::map<std::string, ModelAnim>();
+		}
+
+		Take(char* tName)
+			: Take()
+		{
+			takeName = std::string(tName);
+		}
+
+		std::string takeName;
+		float localTimeSpan[2];
+		float referenceTimeSpan[2];
+		std::map<std::string, ModelAnim> models;
+	};
+
 	void AddVertex(float x, float y, float z);
 	void AddNormal(float x, float y, float z);
 	void CreateUVInfo(int uvIndex, char* name);
@@ -224,21 +341,29 @@ public:
 	void AddSmoothing(int smooth);
 	void SetSmoothMode(int mode);
 	void SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca);
+	void AddMeshEdge(char* name, int startVertexIndex, int endVertexIndex);
 	void AddMaterial(char* mName, char* sName);
 	void AddBone(char* name, Vector3 lclTranslation, Vector3 lclRotation, Vector3 lclScaling);
 	void AddBoneChild(char* child, char* parent);
+	void AddPoseNode(char* name, Mat4x4 transform);
 
-	SubDeformer& GetSubDeformer(const char* mName, const char* bName);
 	void AddSubDeformerIndex(char* mName, char* bName, int index);
 	void AddSubDeformerWeight(char* mName, char* bName, float weight);
 	void SetSubDeformerTransform(char* mName, char* bName, Mat4x4 transform, Vector4 quat);
 	void SetSubDeformerTransformLink(char* mName, char* bName, Mat4x4 transformLink);
 
+	void SetTimeSpan(char* takeName, float lStart, float lEnd, float rStart, float rEnd);
+	void SetChannelDefaultValue(char* takeName, char* modelName, int type, double value);
+	void AddChannelKey(char* takeName, char* modelName, int type, float frame, float value);
+	void SetFPS(float fps);
+
 	void PrintMesh();
 	void PrintSkeleton();
+	void PrintTakes();
 
 	bool Export(char* filePath);
 
+	friend std::ostream& operator<<(std::ostream &os, const IntVector2& vec);
 	friend std::ostream& operator<<(std::ostream &os, const Vector3& vec);
 	friend std::ostream& operator<< (std::ostream &os, const Mat4x4& mat);
 
@@ -248,10 +373,17 @@ private:
 	bool BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode);
 	bool BuildArmature(FbxScene* pScene, FbxNode*& pSkeletonNode);
 	bool BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode);
+	bool BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkeletonNode);
+	bool BuildTakes(FbxScene* pScene, FbxNode* pSkeletonNode);
 
+	SubDeformer& GetSubDeformer(const char* mName, const char* bName);
+	ModelAnim& GetModelAnim(char* takeName, char* modelName);
 	bool FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode, FbxSkin* lSkin);
+	bool FillDefaultValueKeys(FbxAnimCurveNode* animCurveNode, FbxAnimCurve* animCurve, const char* channelName, const Channel& channel);
 private:
 	int val;
+	std::ofstream mLogFile;
+	std::streambuf * mCoutbuf;
 	Mesh mMesh;
 	std::vector<Vector3> mVertices;
 	std::vector<Vector3> mNormals;
@@ -264,4 +396,7 @@ private:
 	 std::vector<Material> mMaterials;
 	 std::map<std::string, Bone> mBones;
 	 std::map<std::string, Deformer> mDeformers;
+	 std::map<std::string, Pose> mPoses;
+	 std::map<std::string, Take> mTakes;
+	 float mFps;
 };

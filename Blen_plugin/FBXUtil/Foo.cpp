@@ -5,6 +5,7 @@
 Foo::Foo(int n)
 {
 	val = n;
+	mLogFile = std::ofstream("ExportFBXSdk.log");
 	mVertices = std::vector<Foo::Vector3>();
 	mNormals = std::vector<Foo::Vector3>();
 	mIndices = std::vector<int>();
@@ -15,6 +16,10 @@ Foo::Foo(int n)
 	mMaterials = std::vector<Material>();
 	mBones = std::map<std::string, Bone>();
 	mDeformers = std::map<std::string, Deformer>();
+	mPoses = std::map<std::string, Pose>();
+	mTakes = std::map<std::string, Take>();
+	mCoutbuf = std::cout.rdbuf(); //save old buf
+	std::cout.rdbuf(mLogFile.rdbuf()); //redirect std::cout to out.txt!
 }
 
 bool Foo::BuildArmature(FbxScene* pScene, FbxNode*& pSkeletonNode)
@@ -217,6 +222,13 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 		}
 	}
 
+	lMesh->BeginAddMeshEdgeIndex();
+	for (const IntVector2& edge : mMesh.edges)
+	{
+		lMesh->AddMeshEdgeIndex(edge.x, edge.y, false);
+	}
+	lMesh->EndAddMeshEdgeIndex();
+	
 	FbxNode* lRootNode = pScene->GetRootNode();
 	FbxNode* lNode = FbxNode::Create(pScene, mMesh.mMeshName.c_str());
 	lNode->LclTranslation.Set(FbxVector4(mMesh.lclTranslation.x, mMesh.lclTranslation.y, mMesh.lclTranslation.z));
@@ -238,6 +250,158 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 	return true;
 }
 
+bool Foo::BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkeletonNode)
+{
+	if (pMeshNode == nullptr || pSkeletonNode == nullptr)
+	{
+		return true;
+	}
+
+	FbxPose* lPose = FbxPose::Create(pScene, pMeshNode->GetName());
+	lPose->SetIsBindPose(true);
+
+	for (std::pair<std::string, Pose> _pose : mPoses)
+	{
+		const Pose& pose = _pose.second;
+		Mat4x4 transform = pose.poseTransform;
+		FbxMatrix lBindMatrix = FbxMatrix(transform.x0, transform.x1, transform.x2, transform.x3,
+			transform.y0, transform.y1, transform.y2, transform.y3,
+			transform.z0, transform.z1, transform.z2, transform.z3,
+			transform.w0, transform.w1, transform.w2, transform.w3);
+
+		FbxNode*  lKFbxNode = nullptr;
+		if (pose.poseNodeName == std::string(pSkeletonNode->GetName()))
+		{
+			lKFbxNode = pSkeletonNode;
+		}
+		else if (pose.poseNodeName == std::string(pMeshNode->GetName()))
+		{
+			lKFbxNode = pMeshNode;
+		}
+		else
+		{
+			lKFbxNode = pSkeletonNode->FindChild(pose.poseNodeName.c_str());
+		}
+
+		if (lKFbxNode == nullptr)
+		{
+			return false;
+		}
+
+		lPose->Add(lKFbxNode, lBindMatrix);
+	}
+
+	pScene->AddPose(lPose);
+
+	return true;
+}
+
+bool Foo::BuildTakes(FbxScene* pScene, FbxNode* pSkeletonNode)
+{
+	if (pSkeletonNode == nullptr)
+	{
+		return true;
+	}
+
+	FbxTime::SetGlobalTimeMode(FbxTime::eCustom, mFps);
+	for (std::pair<std::string, Take> _take : mTakes)
+	{
+		const Take& take = _take.second;
+		FbxAnimStack* lAnimStack = FbxAnimStack::Create(pScene, take.takeName.c_str());
+		FbxAnimLayer* lAnimLayer = FbxAnimLayer::Create(pScene, "Base Layer");
+		lAnimStack->AddMember(lAnimLayer);
+		FbxTime start, end;
+		start.SetFramePrecise(take.localTimeSpan[0], FbxTime::eCustom);
+		end.SetFramePrecise(take.localTimeSpan[1], FbxTime::eCustom);
+		lAnimStack->SetLocalTimeSpan(FbxTimeSpan(start, end));
+
+		start.SetFramePrecise(take.referenceTimeSpan[0], FbxTime::eCustom);
+		end.SetFramePrecise(take.referenceTimeSpan[1], FbxTime::eCustom);
+
+		lAnimStack->SetReferenceTimeSpan(FbxTimeSpan(start, end));
+
+		for (std::pair<std::string, ModelAnim> _model : take.models)
+		{
+			const ModelAnim& model = _model.second;
+			FbxNode*  lKFbxNode = nullptr;
+			if (model.modelName == std::string(pSkeletonNode->GetName()))
+			{
+				lKFbxNode = pSkeletonNode;
+			}
+			else
+			{
+				lKFbxNode = pSkeletonNode->FindChild(model.modelName.c_str());
+			}
+
+			if (lKFbxNode == nullptr)
+			{
+				return false;
+			}
+
+			FbxAnimCurveNode* animTranslationCurveNode = lKFbxNode->LclTranslation.GetCurveNode(lAnimLayer, true);
+			FbxAnimCurveNode* animRotationCurveNode = lKFbxNode->LclRotation.GetCurveNode(lAnimLayer, true);
+			FbxAnimCurveNode* animScalingCurveNode = lKFbxNode->LclScaling.GetCurveNode(lAnimLayer, true);
+			if (animTranslationCurveNode == nullptr || animRotationCurveNode == nullptr || animScalingCurveNode == nullptr)
+			{
+				return false;
+			}
+
+			FbxAnimCurve* lLclTranslationXCurve = lKFbxNode->LclTranslation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_X, true);
+			FbxAnimCurve* lLclTranslationYCurve = lKFbxNode->LclTranslation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, true);
+			FbxAnimCurve* lLclTranslationZCurve = lKFbxNode->LclTranslation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, true);
+
+			FbxAnimCurve* lLclRotationXCurve = lKFbxNode->LclRotation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_X, true);
+			FbxAnimCurve* lLclRotationYCurve = lKFbxNode->LclRotation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, true);
+			FbxAnimCurve* lLclRotationZCurve = lKFbxNode->LclRotation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, true);
+
+			FbxAnimCurve* lLclScalingXCurve = lKFbxNode->LclScaling.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_X, true);
+			FbxAnimCurve* lLclScalingYCurve = lKFbxNode->LclScaling.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, true);
+			FbxAnimCurve* lLclScalingZCurve = lKFbxNode->LclScaling.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, true);
+
+			if (lLclTranslationXCurve == nullptr || lLclTranslationYCurve == nullptr || lLclTranslationZCurve == nullptr
+				|| lLclRotationXCurve == nullptr || lLclRotationYCurve == nullptr || lLclRotationZCurve == nullptr
+				|| lLclScalingXCurve == nullptr || lLclScalingYCurve == nullptr || lLclScalingZCurve == nullptr)
+			{
+				return false;
+			}
+
+			FillDefaultValueKeys(animTranslationCurveNode, lLclTranslationXCurve, FBXSDK_CURVENODE_COMPONENT_X, model.channels[T_X]);
+			FillDefaultValueKeys(animTranslationCurveNode, lLclTranslationYCurve, FBXSDK_CURVENODE_COMPONENT_Y, model.channels[T_Y]);
+			FillDefaultValueKeys(animTranslationCurveNode, lLclTranslationZCurve, FBXSDK_CURVENODE_COMPONENT_Z, model.channels[T_Z]);
+
+			FillDefaultValueKeys(animRotationCurveNode, lLclRotationXCurve, FBXSDK_CURVENODE_COMPONENT_X, model.channels[R_X]);
+			FillDefaultValueKeys(animRotationCurveNode, lLclRotationYCurve, FBXSDK_CURVENODE_COMPONENT_Y, model.channels[R_Y]);
+			FillDefaultValueKeys(animRotationCurveNode, lLclRotationZCurve, FBXSDK_CURVENODE_COMPONENT_Z, model.channels[R_Z]);
+
+			FillDefaultValueKeys(animScalingCurveNode, lLclScalingXCurve, FBXSDK_CURVENODE_COMPONENT_X, model.channels[S_X]);
+			FillDefaultValueKeys(animScalingCurveNode, lLclScalingYCurve, FBXSDK_CURVENODE_COMPONENT_Y, model.channels[S_Y]);
+			FillDefaultValueKeys(animScalingCurveNode, lLclScalingZCurve, FBXSDK_CURVENODE_COMPONENT_Z, model.channels[S_Z]);
+		}
+	}
+
+	return true;
+}
+
+bool Foo::FillDefaultValueKeys(FbxAnimCurveNode* animCurveNode, FbxAnimCurve* animCurve, const char* channelName, const Channel& channel)
+{
+	animCurveNode->SetChannelValue(channelName, channel.defaultValue);
+
+	animCurve->KeyModifyBegin();
+	FbxTime lTime;
+	int lKeyIndex = 0;
+
+	for (const Key& key : channel.keys)
+	{
+		lTime.SetFramePrecise(key.frame, FbxTime::EMode::eCustom);
+		lKeyIndex = animCurve->KeyAdd(lTime);
+		animCurve->KeySetValue(lKeyIndex, key.value);
+		animCurve->KeySetInterpolation(lKeyIndex, FbxAnimCurveDef::eInterpolationCubic);
+	}
+	animCurve->KeyModifyEnd();
+
+	return true;
+}
+
 bool Foo::CreateScene(FbxScene* pScene)
 {
 	FbxNode* pMeshNode = nullptr;
@@ -253,7 +417,17 @@ bool Foo::CreateScene(FbxScene* pScene)
 		return false;
 	}
 
-	if (!BuildDeformer(pScene, pMeshNode, pSkeletonNode))
+	if (!BuildDeformer(pScene, pMeshNode, pSkeletonNode != nullptr ? pSkeletonNode->GetChild(0) : nullptr))
+	{
+		return false;
+	}
+
+	if (!BuildPose(pScene, pMeshNode, pSkeletonNode))
+	{
+		return false;
+	}
+
+	if (!BuildTakes(pScene, pSkeletonNode))
 	{
 		return false;
 	}
@@ -312,6 +486,11 @@ void Foo::SetSmoothMode(int mode)
 	mSmoothMode = mode;
 }
 
+void Foo::AddMeshEdge(char* name, int startVertexIndex, int endVertexIndex)
+{
+	mMesh.edges.push_back(IntVector2(startVertexIndex, endVertexIndex));
+}
+
 void Foo::SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca)
 {
 	mMesh.mMeshName = std::string(name);
@@ -336,6 +515,11 @@ void Foo::AddBoneChild(char* child, char* parent)
 	Bone& parentB = mBones.at(std::string(parent));
 	Bone& childB = mBones.at(std::string(child));
 	childB.parentName = parentB.boneName;
+}
+
+void Foo::AddPoseNode(char* name, Mat4x4 transform)
+{
+	mPoses.insert(make_pair(std::string(name), Pose(name, transform)));
 }
 
 Foo::SubDeformer& Foo::GetSubDeformer(const char* mName, const char* bName)
@@ -382,14 +566,142 @@ void Foo::AddSubDeformerIndex(char* mName, char* bName, int index)
 {
 	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
 	subDeformer.indexes.push_back(index);
+}
+
+Foo::ModelAnim& Foo::GetModelAnim(char* tName, char* mName)
+{
+	std::string takeName = std::string(tName);
+	std::string modelName = std::string(mName);
+
+	std::map<std::string, Take>::iterator ite = mTakes.find(takeName);
+	if (ite == mTakes.end())
+	{
+		mTakes.insert(make_pair(takeName, Take(tName)));
+	}
+
+	std::map<std::string, ModelAnim>& models = mTakes.at(takeName).models;
+	std::map<std::string, ModelAnim>::iterator ite2 = models.find(modelName);
+	if (ite2 == models.end())
+	{
+		models.insert(make_pair(modelName, ModelAnim(mName)));
+	}
+
+	return models.at(modelName);
+}
+
+void Foo::SetTimeSpan(char* tName, float lStart, float lEnd, float rStart, float rEnd)
+{
+	std::string takeName = std::string(tName);
+
+	std::map<std::string, Take>::iterator ite = mTakes.find(takeName);
+	if (ite == mTakes.end())
+	{
+		mTakes.insert(make_pair(takeName, Take(tName)));
+	}
+
+	Take& take = mTakes.at(takeName);
+	take.localTimeSpan[0] = lStart;
+	take.localTimeSpan[1] = lEnd;
+
+	take.referenceTimeSpan[0] = rStart;
+	take.referenceTimeSpan[1] = rEnd;
+}
+
+void Foo::SetChannelDefaultValue(char* takeName, char* modelName, int type, double value)
+{
+	if (type >= ChannelType::ChannelMax)
+	{
+		return;
+	}
+
+	ChannelType channelType = static_cast<ChannelType>(type);
+	ModelAnim& model = GetModelAnim(takeName, modelName);
 	
+	model.channels[channelType].defaultValue = value;
+}
+
+void Foo::AddChannelKey(char* takeName, char* modelName, int type, float frame, float value)
+{
+	if (type >= ChannelType::ChannelMax)
+	{
+		return;
+	}
+
+	ChannelType channelType = static_cast<ChannelType>(type);
+	ModelAnim& model = GetModelAnim(takeName, modelName);
+
+	model.channels[channelType].keys.push_back(Key(frame, value));
+}
+
+void Foo::SetFPS(float fps)
+{
+	mFps = fps;
+}
+
+void Foo::PrintTakes()
+{
+	std::cout << "FPS: " << mFps << std::endl;
+	for (std::pair<std::string, Take> _take : mTakes)
+	{
+		const Take& take = _take.second;
+		std::cout << "take name: " << take.takeName << std::endl;
+		std::cout << "local time span: [" << take.localTimeSpan[0] << ", " << take.localTimeSpan[1] << "]" << std::endl;
+		std::cout << "reference time span: [" << take.referenceTimeSpan[0] << ", " << take.referenceTimeSpan[1] << "]" << std::endl;
+		for (std::pair<std::string, ModelAnim> _model : take.models)
+		{
+			ModelAnim model = _model.second;
+			std::cout << "model name: " << model.modelName << std::endl;
+			for (int i = ChannelType::T_X; i < ChannelType::ChannelMax; ++i)
+			{
+				switch (i)
+				{
+				case ChannelType::T_X:
+					std::cout << "channel T_X ";
+					break;
+				case ChannelType::T_Y:
+					std::cout << "channel T_Y ";
+					break;
+				case ChannelType::T_Z:
+					std::cout << "channel T_Z ";
+					break;
+				case ChannelType::R_X:
+					std::cout << "channel R_X ";
+					break;
+				case ChannelType::R_Y:
+					std::cout << "channel R_Y ";
+					break;
+				case ChannelType::R_Z:
+					std::cout << "channel R_Z ";
+					break;
+				case ChannelType::S_X:
+					std::cout << "channel S_X ";
+					break;
+				case ChannelType::S_Y:
+					std::cout << "channel S_Y ";
+					break;
+				case ChannelType::S_Z:
+					std::cout << "channel S_Z ";
+					break;
+				default:
+					break;
+				}
+				std::cout << "default value: " << model.channels[i].defaultValue << std::endl;
+				std::cout << "keys: [";
+				for (Key key : model.channels[i].keys)
+				{
+					std::cout << "(" << key.frame << ", " << key.value << "), ";
+				}
+				std::cout << "]" << std::endl;
+			}
+		}
+	}
 }
 
 void Foo::PrintSkeleton()
 {
-	for (std::pair<std::string, Foo::Bone> _bone : mBones)
+	for (std::pair<std::string, Bone> _bone : mBones)
 	{
-		const Foo::Bone& bone = _bone.second;
+		const Bone& bone = _bone.second;
 		std::cout << "Bone name: " << _bone.first << " translation: " << bone.lclTranslation << " rotation: " 
 			<< bone.lclRotation << " scaling: " << bone.lclScaling << " parent: " << bone.parentName << std::endl;
 	}
@@ -423,6 +735,13 @@ void Foo::PrintSkeleton()
 			std::cout << subDeformer.transformLink << std::endl;
 		}
 	}
+
+	for (std::pair<std::string, Pose> _pose : mPoses)
+	{
+		const Pose& pose = _pose.second;
+		std::cout << "pose node name: " << pose.poseNodeName << " transform:" << std::endl
+			<< pose.poseTransform << std::endl;
+	}
 }
 
 void Foo::PrintMesh()
@@ -453,6 +772,11 @@ void Foo::PrintMesh()
 
 	std::cout << "mesh name: " << mMesh.mMeshName << std::endl;
 	std::cout << "mesh translation: " << mMesh.lclTranslation << " rotation: " << mMesh.lclRotation << " scale: " << mMesh.lclScaling << std::endl;
+
+	for (const Foo::IntVector2& edge : mMesh.edges)
+	{
+		std::cout << "edge" << edge << std::endl;
+	}
 
 	std::cout << "smoothing mode:" << mSmoothMode << std::endl;
 	for (int s : mSmoothing)
@@ -493,6 +817,10 @@ void Foo::PrintMesh()
 
 bool Foo::Export(char* filePath)
 {
+	std::cout.rdbuf(mCoutbuf); //reset to standard output again
+	mLogFile.flush();
+	mLogFile.close();
+
 	FbxManager* lSdkManager = NULL;
 	FbxScene* lScene = NULL;
 
@@ -516,6 +844,12 @@ bool Foo::Export(char* filePath)
 	}
 
 	return true;
+}
+
+std::ostream& operator<< (std::ostream &os, const Foo::IntVector2& vec)
+{
+	os << "[ " << vec.x << ", " << vec.y << "]";
+	return os;
 }
 
 std::ostream& operator<< (std::ostream &os, const Foo::Vector3& vec)
@@ -544,11 +878,14 @@ extern "C"
 	DLLEXPORT void Foo_AddMatIndex(Foo* foo, int n) { foo->AddMatIndex(n); }
 	DLLEXPORT void Foo_AddUVIndex(Foo* foo, int uvIndex, int n) { foo->AddUVIndex(uvIndex, n); }
 	DLLEXPORT void Foo_AddLoopStart(Foo* foo, int n) { foo->AddLoopStart(n); }
+	DLLEXPORT void Foo_AddMeshEdge(Foo* foo, char* name, int s, int e) { foo->AddMeshEdge(name, s, e); }
 	DLLEXPORT void Foo_AddSmoothing(Foo* foo, int s) { foo->AddSmoothing(s); }
 	DLLEXPORT void Foo_SetSmoothMode(Foo* foo, int m) { foo->SetSmoothMode(m); }
 	DLLEXPORT void Foo_SetMeshProperty(Foo* foo, char* name, Foo::Vector3 trans, Foo::Vector3 rot, Foo::Vector3 sca) 
 		{ foo->SetMeshProperty(name, trans, rot, sca); }
 	DLLEXPORT void Foo_AddMaterial(Foo* foo, char* mName, char* sName) { foo->AddMaterial(mName, sName); }
+
+	DLLEXPORT void Foo_AddPoseNode(Foo* foo, char* name, Foo::Mat4x4 mat) { foo->AddPoseNode(name, mat); }
 	DLLEXPORT void Foo_AddBoneChild(Foo* foo, char* cName, char* pName) { foo->AddBoneChild(cName, pName); }
 	DLLEXPORT void Foo_AddBone(Foo* foo, char* name, Foo::Vector3 lclTranslation, Foo::Vector3 lclRotation, Foo::Vector3 lclScaling)
 		{ foo->AddBone(name, lclTranslation, lclRotation, lclScaling); }
@@ -556,7 +893,14 @@ extern "C"
 	DLLEXPORT void Foo_AddSubDeformerWeight(Foo* foo, char* mName, char* bName, float weight) { foo->AddSubDeformerWeight(mName, bName, weight); }
 	DLLEXPORT void Foo_SetSubDeformerTransform(Foo* foo, char* mName, char* bName, Foo::Mat4x4 transf, Foo::Vector4 quat) { foo->SetSubDeformerTransform(mName, bName, transf, quat); }
 	DLLEXPORT void Foo_SetSubDeformerTransformLink(Foo* foo, char* mName, char* bName, Foo::Mat4x4 transfLink) { foo->SetSubDeformerTransformLink(mName, bName, transfLink); }
+
+	DLLEXPORT void Foo_SetFPS(Foo* foo, float fps) { foo->SetFPS(fps); }
+	DLLEXPORT void Foo_SetTimeSpan(Foo* foo, char* tName, float lStart, float lEnd, float rStart, float rEnd) { foo->SetTimeSpan(tName, lStart, lEnd, rStart, rEnd); }
+	DLLEXPORT void Foo_SetChannelDefaultValue(Foo* foo, char* takeName, char* modelName, int type, double value) { foo->SetChannelDefaultValue(takeName, modelName, type, value); }
+	DLLEXPORT void Foo_AddChannelKey(Foo* foo, char* takeName, char* modelName, int type, float frame, float value) { foo->AddChannelKey(takeName, modelName, type, frame, value); }
+
 	DLLEXPORT bool Foo_Export(Foo* foo, char* name) { return foo->Export(name); }
 	DLLEXPORT void Foo_PrintMesh(Foo* foo) { foo->PrintMesh(); }
 	DLLEXPORT void Foo_PrintSkeleton(Foo* foo) { foo->PrintSkeleton(); }
+	DLLEXPORT void Foo_PrintTakes(Foo* foo) { foo->PrintTakes(); }
 }

@@ -633,8 +633,8 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
     filter_glob = StringProperty(default="*.fbx", options={'HIDDEN'})
     
     version = EnumProperty(
-            items=(('BIN7400', "FBX 7.4 binary", "Modern 7.4 binary version"),
-                   ('ASCII6100', "FBX 6.1 ASCII",
+            items=(('BIN', "FBX 7.4 binary", "Modern 7.4 binary version"),
+                   ('ASCII', "FBX 6.1 ASCII",
                                  "Legacy 6.1 ascii version - WARNING: Deprecated and no more maintained"),
                    ),
             name="Version",
@@ -671,15 +671,43 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             name="Object Types",
             options={'ENUM_FLAG'},
             items=(('EMPTY', "Empty", ""),
-                   ('CAMERA', "Camera", ""),
-                   ('LAMP', "Lamp", ""),
                    ('ARMATURE', "Armature", "WARNING: not supported in dupli/group instances"),
                    ('MESH', "Mesh", ""),
                    ('OTHER', "Other", "Other geometry types, like curve, metaball, etc. (converted to meshes)"),
                    ),
             description="Which kind of object to export",
-            default={'EMPTY', 'CAMERA', 'LAMP', 'ARMATURE', 'MESH', 'OTHER'},
-            )    
+            default={'EMPTY', 'ARMATURE', 'MESH', 'OTHER'},
+            )
+    # Anim - 6.1
+    use_anim = BoolProperty(
+            name="Animation",
+            description="Export keyframe animation",
+            default=True,
+            )
+    use_anim_action_all = BoolProperty(
+            name="All Actions",
+            description=("Export all actions for armatures or just the currently selected action"),
+            default=True,
+            )
+    use_default_take = BoolProperty(
+            name="Default Take",
+            description="Export currently assigned object and armature animations into a default take from the scene "
+                        "start/end frames",
+            default=True
+            )
+    use_anim_optimize = BoolProperty(
+            name="Optimize Keyframes",
+            description="Remove double keyframes",
+            default=True,
+            )
+    anim_optimize_precision = FloatProperty(
+            name="Precision",
+            description="Tolerance for comparing double keyframes (higher for greater accuracy)",
+            min=0.0, max=20.0,  # from 10^2 to 10^-18 frames precision.
+            soft_min=1.0, soft_max=16.0,
+            default=6.0,  # default: 10^-4 frames.
+            )
+    # End anim    
     
     def draw(self, context):
         layout = self.layout
@@ -690,10 +718,18 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         layout.prop(self, "use_mesh_modifiers")
         layout.prop(self, "mesh_smooth_type")
         layout.prop(self, "use_mesh_edges")
+        layout.prop(self, "use_tspace")
         layout.prop(self, "axis_forward")
         layout.prop(self, "axis_up")
-        sub = layout.row()
-        sub.prop(self, "use_tspace")
+        
+        layout.prop(self, "use_anim")
+        col = layout.column()
+        col.enabled = self.use_anim
+        col.prop(self, "use_anim_action_all")
+        col.prop(self, "use_default_take")
+        col.prop(self, "use_anim_optimize")
+        col.prop(self, "anim_optimize_precision")
+        
         
     def execute(self, context):
         
