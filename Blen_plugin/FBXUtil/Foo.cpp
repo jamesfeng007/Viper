@@ -5,6 +5,7 @@
 Foo::Foo(int n)
 {
 	val = n;
+	mAsASCII = false;
 	mLogFile = std::ofstream("ExportFBXSdk.log");
 	mVertices = std::vector<Foo::Vector3>();
 	mNormals = std::vector<Foo::Vector3>();
@@ -18,6 +19,7 @@ Foo::Foo(int n)
 	mDeformers = std::map<std::string, Deformer>();
 	mPoses = std::map<std::string, Pose>();
 	mTakes = std::map<std::string, Take>();
+	mTextures = std::map<std::string, Texture>();
 	mCoutbuf = std::cout.rdbuf(); //save old buf
 	std::cout.rdbuf(mLogFile.rdbuf()); //redirect std::cout to out.txt!
 }
@@ -157,6 +159,13 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 		lGeometryElementNormal->GetDirectArray().Add(FbxVector4(mNormals[i].x, mNormals[i].y, mNormals[i].z));
 	}
 
+	FbxLayer* lLayer = lMesh->GetLayer(0);
+	if (lLayer == NULL)
+	{
+		lMesh->CreateLayer();
+		lLayer = lMesh->GetLayer(0);
+	}
+
 	for (std::pair<int, Foo::LayerElementUVInfo> _uvInfo : mUVInfos)
 	{
 		Foo::LayerElementUVInfo uvInfo = _uvInfo.second;
@@ -172,6 +181,7 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 		{
 			lUVElement->GetIndexArray().Add(uvIndex);
 		}
+		lLayer->SetUVs(lUVElement, FbxLayerElement::eUV);
 	}
 
 	FbxGeometryElementMaterial* lMaterialElement = lMesh->CreateElementMaterial();
@@ -182,6 +192,7 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 		lMaterialElement->SetMappingMode(FbxGeometryElement::eAllSame);
 		lMaterialElement->GetIndexArray().Add(0);
 	}
+	lLayer->SetMaterials(lMaterialElement);
 
 	for (int i = 0; i < mLoopStart.size(); ++i)
 	{
@@ -238,13 +249,67 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 	lNode->SetNodeAttribute(lMesh);
 	pMeshNode = lNode;
 
-	for (Material mat : mMaterials)
+	for (const Material& mat : mMaterials)
 	{
 		FbxSurfacePhong *lMaterial = FbxSurfacePhong::Create(pScene, FbxString(mat.materialName.c_str()).Buffer());
 		lMaterial->ShadingModel.Set(FbxString(mat.shadingName.c_str()));
+		lMaterial->Emissive.Set(mat.emissiveColor);
+		lMaterial->Ambient.Set(mat.ambientColor);
+		lMaterial->Diffuse.Set(mat.diffuseColor);
 		FbxNode* lNode = lMesh->GetNode();
 		if (lNode)
 			lNode->AddMaterial(lMaterial);
+	}
+
+	for (std::pair<std::string, Texture> _tex : mTextures)
+	{
+		const Texture& tex = _tex.second;
+		FbxFileTexture* lTexture = FbxFileTexture::Create(pScene, tex.name.c_str());
+		lTexture->SetFileName(tex.fileName.c_str());
+		lTexture->SetRelativeFileName(tex.relFileName.c_str());
+		lTexture->SetAlphaSource(static_cast<FbxTexture::EAlphaSource>(tex.alphaSource));
+		lTexture->SetPremultiplyAlpha(tex.premultiplyAlpha);
+		if (tex.currentMappingType == 0)
+		{
+			lTexture->SetMappingType(FbxTexture::EMappingType::eUV);
+		}
+		else if (tex.currentMappingType == 1)
+		{
+			lTexture->SetMappingType(FbxTexture::EMappingType::ePlanar);
+		}
+		else if (tex.currentMappingType == 2)
+		{
+			lTexture->SetMappingType(FbxTexture::EMappingType::eSpherical);
+		}
+		else if (tex.currentMappingType == 3)
+		{
+			lTexture->SetMappingType(FbxTexture::EMappingType::eCylindrical);
+		}
+		else if (tex.currentMappingType == 4)
+		{
+			lTexture->SetMappingType(FbxTexture::EMappingType::eBox);
+		}
+		lTexture->UVSet.Set(FbxString(tex.UVSet.c_str()));
+		lTexture->SetWrapMode(static_cast<FbxTexture::EWrapMode>(tex.wrapModeU), static_cast<FbxTexture::EWrapMode>(tex.wrapModeV));
+		lTexture->SetTranslation(tex.translation.x, tex.translation.y);
+		lTexture->SetScale(tex.scaling.x, tex.scaling.y);
+		lTexture->UseMaterial.Set(tex.useMaterial);
+		lTexture->UseMipMap.Set(tex.useMipMap);
+		
+		FbxNode* lNode = lMesh->GetNode();
+		int index = lNode->GetMaterialIndex(tex.parentMat.c_str());
+		FbxSurfaceMaterial* lMaterial = lNode->GetMaterial(index);
+		if (FbxSurfacePhong* lMaterialPhong = dynamic_cast<FbxSurfacePhong*>(lMaterial))
+		{
+			if (tex.matProp == std::string("DiffuseColor"))
+			{
+				lMaterialPhong->Diffuse.ConnectSrcObject(lTexture);
+			}
+			else if (tex.matProp == std::string("NormalMap"))
+			{
+				lMaterialPhong->NormalMap.ConnectSrcObject(lTexture);
+			}
+		}
 	}
 
 	return true;
@@ -515,6 +580,20 @@ void Foo::AddBoneChild(char* child, char* parent)
 	Bone& parentB = mBones.at(std::string(parent));
 	Bone& childB = mBones.at(std::string(child));
 	childB.parentName = parentB.boneName;
+}
+
+void Foo::SetTextureMatProp(char* name, char* matName, char* matProp)
+{
+	Texture& tex = mTextures.at(std::string(name));
+	tex.parentMat = std::string(matName);
+	tex.matProp = std::string(matProp);
+}
+
+void Foo::AddTexture(char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
+	Vector3 translation, Vector3 scaling, bool useMaterial, bool useMipMap)
+{
+	mTextures.insert(make_pair(std::string(name), Texture(name, fileName, relFileName, alphaSource, premultiplyAlpha, currentMappingType, UVSet, wrapModeU, wrapModeV,
+		translation, scaling, useMaterial, useMipMap)));
 }
 
 void Foo::AddPoseNode(char* name, Mat4x4 transform)
@@ -809,9 +888,21 @@ void Foo::PrintMesh()
 	}
 	std::cout << " ]" << std::endl;
 
-	for (Foo::Material mat : mMaterials)
+	for (const Material& mat : mMaterials)
 	{
 		std::cout << "Material [material name: " << mat.materialName << ", shading name: " << mat.shadingName << "]" << std::endl;
+		std::cout << "diffuse color: " << mat.diffuseColor[0] << ", " << mat.diffuseColor[1] << ", " << mat.diffuseColor[2] << std::endl;
+		std::cout << "ambient color: " << mat.ambientColor[0] << ", " << mat.ambientColor[1] << ", " << mat.ambientColor[2] << std::endl;
+		std::cout << "emissive color: " << mat.emissiveColor[0] << ", " << mat.emissiveColor[1] << ", " << mat.emissiveColor[2] << std::endl;
+	}
+
+	std::cout << "Textures:" << std::endl;
+	for (std::pair<std::string, Texture> _tex : mTextures)
+	{
+		const Texture& tex = _tex.second;
+		std::cout << "name: " << tex.name << " filename: " << tex.fileName << " rel filename: " << tex.relFileName << std::endl << " alphaSource: " << tex.alphaSource << " premultiplyAlpha: " << tex.premultiplyAlpha
+			<< " currentMappingType: " << tex.currentMappingType << " UVSet: " << tex.UVSet << " wrapModeU: " << tex.wrapModeU << " wrapModeV: " << tex.wrapModeV << std::endl << " translation: " << tex.translation
+			<< " scaling: " << tex.scaling << " useMaterial: " << tex.useMaterial << " useMipMap: " << tex.useMipMap << " mat Parent: " << tex.parentMat << " mat Prop: " << tex.matProp << std::endl;
 	}
 }
 
@@ -834,7 +925,7 @@ bool Foo::Export(char* filePath)
 	}
 
 	// Save the scene.
-	lResult = SaveScene(lSdkManager, lScene, filePath);
+	lResult = SaveScene(lSdkManager, lScene, filePath, mAsASCII);
 
 	if (lResult == false)
 	{
@@ -884,6 +975,10 @@ extern "C"
 	DLLEXPORT void Foo_SetMeshProperty(Foo* foo, char* name, Foo::Vector3 trans, Foo::Vector3 rot, Foo::Vector3 sca) 
 		{ foo->SetMeshProperty(name, trans, rot, sca); }
 	DLLEXPORT void Foo_AddMaterial(Foo* foo, char* mName, char* sName) { foo->AddMaterial(mName, sName); }
+	DLLEXPORT void Foo_AddTexture(Foo* foo, char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
+		Foo::Vector3 translation, Foo::Vector3 scaling, bool useMaterial, bool useMipMap) { foo->AddTexture(name, fileName, relFileName, alphaSource, premultiplyAlpha, currentMappingType, UVSet, 
+			wrapModeU, wrapModeV, translation, scaling, useMaterial, useMipMap);}
+	DLLEXPORT void Foo_SetTextureMatProp(Foo* foo, char* name, char* matName, char* matProp) { foo->SetTextureMatProp(name, matName, matProp); }
 
 	DLLEXPORT void Foo_AddPoseNode(Foo* foo, char* name, Foo::Mat4x4 mat) { foo->AddPoseNode(name, mat); }
 	DLLEXPORT void Foo_AddBoneChild(Foo* foo, char* cName, char* pName) { foo->AddBoneChild(cName, pName); }
@@ -903,4 +998,6 @@ extern "C"
 	DLLEXPORT void Foo_PrintMesh(Foo* foo) { foo->PrintMesh(); }
 	DLLEXPORT void Foo_PrintSkeleton(Foo* foo) { foo->PrintSkeleton(); }
 	DLLEXPORT void Foo_PrintTakes(Foo* foo) { foo->PrintTakes(); }
+
+	DLLEXPORT void Foo_SetAsASCII(Foo* foo, bool asAscii) { foo->SetAsASCII(asAscii); }
 }

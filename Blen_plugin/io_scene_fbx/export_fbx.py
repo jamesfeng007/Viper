@@ -549,12 +549,10 @@ def save_single(operator, scene, filepath="",
         matrix_mod is only used for bones at the moment
         """
         loc, rot, scale, matrix, matrix_rot = object_tx(ob, loc, matrix, matrix_mod)
-  
 
         fw('\n\t\t\tProperty: "Lcl Translation", "Lcl Translation", "A+",%.15f,%.15f,%.15f' % loc)
         fw('\n\t\t\tProperty: "Lcl Rotation", "Lcl Rotation", "A+",%.15f,%.15f,%.15f' % tuple_rad_to_deg(rot))
-        fw('\n\t\t\tProperty: "Lcl Scaling", "Lcl Scaling", "A+",%.15f,%.15f,%.15f' % scale)     
-        
+        fw('\n\t\t\tProperty: "Lcl Scaling", "Lcl Scaling", "A+",%.15f,%.15f,%.15f' % scale)
         return loc, rot, scale, matrix, matrix_rot
 
     def get_constraints(ob=None):

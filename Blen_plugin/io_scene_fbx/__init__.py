@@ -707,7 +707,13 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             soft_min=1.0, soft_max=16.0,
             default=6.0,  # default: 10^-4 frames.
             )
-    # End anim    
+    # End anim
+    path_mode = path_reference_mode    
+    embed_textures = BoolProperty(
+            name="Embed Textures",
+            description="Embed textures in FBX binary file (only for \"Copy\" path mode!)",
+            default=False,
+            )    
     
     def draw(self, context):
         layout = self.layout
@@ -729,6 +735,12 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         col.prop(self, "use_default_take")
         col.prop(self, "use_anim_optimize")
         col.prop(self, "anim_optimize_precision")
+        
+        row = layout.row(align=True)
+        row.prop(self, "path_mode")        
+        sub = row.row(align=True)
+        sub.enabled = (self.path_mode == 'COPY')
+        sub.prop(self, "embed_textures", text="", icon='PACKAGE' if self.embed_textures else 'UGLYPACKAGE')        
         
         
     def execute(self, context):

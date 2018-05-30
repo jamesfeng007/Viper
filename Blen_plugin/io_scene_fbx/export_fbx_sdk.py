@@ -2,9 +2,12 @@ import os
 import time
 import math  # math.pi
 from ctypes import c_char_p, byref
+from collections import OrderedDict
 
 import bpy
+import bpy_extras
 from mathutils import Vector, Matrix
+from .fbx_utils import ( ObjectWrapper, FBXExportSettingsMedia, get_blenderID_key, )
 from print_util import PrintHelper
 
 from fbx_export import FBXExport, Vector3, Mat4x4, Vector4, ChannelType
@@ -222,6 +225,7 @@ def save_single(operator, scene, filepath="",
         use_mesh_modifiers=True,
         mesh_smooth_type='FACE',
         use_armature_deform_only=False,
+        version='BIN',
         use_anim=True,
         use_anim_optimize=True,
         anim_optimize_precision=6,
@@ -230,6 +234,7 @@ def save_single(operator, scene, filepath="",
         path_mode='AUTO',
         use_mesh_edges=True,
         use_default_take=True,
+        embed_textures=False,
         **kwargs
     ):
     
@@ -243,6 +248,22 @@ def save_single(operator, scene, filepath="",
         global_scale = global_matrix.median_scale    
     
     fbxSDKExport = FBXExport(5)
+    
+    if version == 'BIN':
+        fbxSDKExport.set_as_ascii(False)
+    else:
+        fbxSDKExport.set_as_ascii(True)
+        
+    media_settings = FBXExportSettingsMedia(
+        path_mode,
+        os.path.dirname(bpy.data.filepath),  # base_src
+        os.path.dirname(filepath),  # base_dst
+        # Local dir where to put images (medias), using FBX conventions.
+        os.path.splitext(os.path.basename(filepath))[0] + ".fbm",  # subdir
+        embed_textures,
+        set(),  # copy_set
+        set(),  # embedded_set
+    )
     
     class my_bone_class(object):
         __slots__ = ("blenName",
@@ -879,7 +900,7 @@ def save_single(operator, scene, filepath="",
             # This causes the makeDisplayList command to effect the mesh
             scene.frame_set(scene.frame_current)
 
-    del tmp_ob_type, context_objects
+    del tmp_ob_type
 
     # now we have collected all armatures, add bones
     for i, ob in enumerate(ob_arms):
@@ -996,6 +1017,182 @@ def save_single(operator, scene, filepath="",
 
     del tmp_obmapping
     # Finished finding groups we use
+    
+    def check_skip_material(mat):
+        """Simple helper to check whether we actually support exporting that material or not"""
+        return mat.type not in {'SURFACE'}    
+    
+    def _gen_vid_path(img):
+        msetts = media_settings
+        fname_rel = bpy_extras.io_utils.path_reference(img.filepath, msetts.base_src, msetts.base_dst, msetts.path_mode,
+                                                       msetts.subdir, msetts.copy_set, img.library)
+        fname_abs = os.path.normpath(os.path.abspath(os.path.join(msetts.base_dst, fname_rel)))
+        return fname_abs, fname_rel    
+    
+    def fbx_data_texture_file_elements(root, tex, data_textures):
+        tex_key, _mats = data_textures[tex]
+        img = tex.texture.image
+        fname_abs, fname_rel = _gen_vid_path(img)
+        
+        alpha_source = 0  # None
+        if img.use_alpha:
+            if tex.texture.use_calculate_alpha:
+                alpha_source = 1  # RGBIntensity as alpha.
+            else:
+                alpha_source = 2  # Black, i.e. alpha channel.
+                
+        # BlendMode not useful for now, only affects layered textures afaics.
+        mapping = 0  # UV.
+        uvset = None
+        if tex.texture_coords in {'ORCO'}:  # XXX Others?
+            if tex.mapping in {'FLAT'}:
+                mapping = 1  # Planar
+            elif tex.mapping in {'CUBE'}:
+                mapping = 4  # Box
+            elif tex.mapping in {'TUBE'}:
+                mapping = 3  # Cylindrical
+            elif tex.mapping in {'SPHERE'}:
+                mapping = 2  # Spherical
+        elif tex.texture_coords in {'UV'}:
+            mapping = 0  # UV
+            # Yuck, UVs are linked by mere names it seems... :/
+            uvset = tex.uv_layer
+        wrap_mode = 1  # Clamp
+        if tex.texture.extension in {'REPEAT'}:
+            wrap_mode = 0  # Repeat            
+                
+        fbx_translation = Vector3(tex.offset[0], tex.offset[1], tex.offset[2])
+        fbx_scaling = Vector3(tex.scale[0], tex.scale[1], tex.scale[2])
+        
+        fbxSDKExport.add_texture(c_char_p(tex.name.encode('utf-8')), c_char_p(fname_abs.encode('utf-8')), c_char_p(fname_rel.encode('utf-8')), 
+                                 alpha_source, img.alpha_mode in {'STRAIGHT'}, mapping, c_char_p(uvset.encode('utf-8')) if uvset is not None else "", 
+                                 wrap_mode, wrap_mode, byref(fbx_translation), byref(fbx_scaling), True, tex.texture.use_mipmap)        
+        
+    def fbx_mat_properties_from_texture(tex):
+        """
+        Returns a set of FBX metarial properties that are affected by the given texture.
+        Quite obviously, this is a fuzzy and far-from-perfect mapping! Amounts of influence are completely lost, e.g.
+        Note tex is actually expected to be a texture slot.
+        """
+        # Mapping Blender -> FBX (blend_use_name, blend_fact_name, fbx_name).
+        blend_to_fbx = (
+            # Lambert & Phong...
+            ("diffuse", "diffuse", b"DiffuseFactor"),
+            ("color_diffuse", "diffuse_color", b"DiffuseColor"),
+            ("alpha", "alpha", b"TransparencyFactor"),
+            ("diffuse", "diffuse", b"TransparentColor"),  # Uses diffuse color in Blender!
+            ("emit", "emit", b"EmissiveFactor"),
+            ("diffuse", "diffuse", b"EmissiveColor"),  # Uses diffuse color in Blender!
+            ("ambient", "ambient", b"AmbientFactor"),
+            # ("", "", b"AmbientColor"),  # World stuff in Blender, for now ignore...
+            ("normal", "normal", b"NormalMap"),
+            # Note: unsure about those... :/
+            # ("", "", b"Bump"),
+            # ("", "", b"BumpFactor"),
+            # ("", "", b"DisplacementColor"),
+            # ("", "", b"DisplacementFactor"),
+            # Phong only.
+            ("specular", "specular", b"SpecularFactor"),
+            ("color_spec", "specular_color", b"SpecularColor"),
+            # See Material template about those two!
+            ("hardness", "hardness", b"Shininess"),
+            ("hardness", "hardness", b"ShininessExponent"),
+            ("mirror", "mirror", b"ReflectionColor"),
+            ("raymir", "raymir", b"ReflectionFactor"),
+        )
+    
+        tex_fbx_props = set()
+        for use_map_name, name_factor, fbx_prop_name in blend_to_fbx:
+            # Always export enabled textures, even if they have a null influence...
+            if getattr(tex, "use_map_" + use_map_name):
+                tex_fbx_props.add(fbx_prop_name)
+    
+        return tex_fbx_props        
+    
+    objects = OrderedDict()  # Because we do not have any ordered set...
+    objtypes = object_types
+    for ob in context_objects:
+        if ob.type not in objtypes:
+            continue
+        ob_obj = ObjectWrapper(ob)
+        objects[ob_obj] = None
+        
+    data_materials = OrderedDict()
+    for ob_obj in objects:
+        # If obj is not a valid object for materials, wrapper will just return an empty tuple...
+        for mat_s in ob_obj.material_slots:
+            mat = mat_s.material
+            if mat is None:
+                continue  # Empty slots!
+            # Note theoretically, FBX supports any kind of materials, even GLSL shaders etc.
+            # However, I doubt anything else than Lambert/Phong is really portable!
+            # We support any kind of 'surface' shader though, better to have some kind of default Lambert than nothing.
+            # Note we want to keep a 'dummy' empty mat even when we can't really support it, see T41396.
+            mat_data = data_materials.get(mat)
+            if mat_data is not None:
+                mat_data[1].append(ob_obj)
+            else:
+                data_materials[mat] = (get_blenderID_key(mat), [ob_obj])        
+        
+    # Note FBX textures also hold their mapping info.
+    # TODO: Support layers?
+    data_textures = OrderedDict()
+    # FbxVideo also used to store static images...
+    data_videos = OrderedDict()
+    # For now, do not use world textures, don't think they can be linked to anything FBX wise...
+    for mat in data_materials.keys():
+        if check_skip_material(mat):
+            continue
+        for tex, use_tex in zip(mat.texture_slots, mat.use_textures):
+            if tex is None or tex.texture is None or not use_tex:
+                continue
+            # For now, only consider image textures.
+            # Note FBX does has support for procedural, but this is not portable at all (opaque blob),
+            # so not useful for us.
+            # TODO I think ENVIRONMENT_MAP should be usable in FBX as well, but for now let it aside.
+            # if tex.texture.type not in {'IMAGE', 'ENVIRONMENT_MAP'}:
+            if tex.texture.type not in {'IMAGE'}:
+                continue
+            img = tex.texture.image
+            if img is None:
+                continue
+            # Find out whether we can actually use this texture for this material, in FBX context.
+            tex_fbx_props = fbx_mat_properties_from_texture(tex)
+            if not tex_fbx_props:
+                continue
+            tex_data = data_textures.get(tex)
+            if tex_data is not None:
+                tex_data[1][mat] = tex_fbx_props
+            else:
+                data_textures[tex] = (get_blenderID_key(tex), OrderedDict(((mat, tex_fbx_props),)))
+            vid_data = data_videos.get(img)
+            if vid_data is not None:
+                vid_data[1].append(tex)
+            else:
+                data_videos[img] = (get_blenderID_key(img), [tex])
+                
+    for tex in data_textures:
+        fbx_data_texture_file_elements(objects, tex, data_textures)
+        
+    # Textures
+    for tex, (tex_key, mats) in data_textures.items():
+        for mat, fbx_mat_props in mats.items():
+            mat_key, _ob_objs = data_materials[mat]
+            for fbx_prop in fbx_mat_props:
+                # texture -> material properties
+                #connections.append((b"OP", get_fbx_uuid_from_key(tex_key), get_fbx_uuid_from_key(mat_key), fbx_prop))
+                fbxSDKExport.set_texture_mat_prop(c_char_p(tex.name.encode('utf-8')), c_char_p(mat.name.encode('utf-8')), c_char_p(fbx_prop))
+                print("fbx_prop")
+                print(fbx_prop)
+                print(type(fbx_prop))
+                str = fbx_prop.decode("utf-8") 
+                print("str")
+                print(str)
+                print(type(str))
+                
+                
+        
+    del context_objects
 
     # == WRITE OBJECTS TO THE FILE ==
     # == From now on we are building the FBX file from the information collected above (JCB)    
@@ -1313,7 +1510,7 @@ def save_single(operator, scene, filepath="",
     del ob_meshes[:]
     
     #fbxSDKExport.print_skeleton()
-    #fbxSDKExport.print_mesh()
+    fbxSDKExport.print_mesh()
     #fbxSDKExport.print_takes()
     
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
@@ -1338,3 +1535,5 @@ def save(operator, context,
     kwargs_mod["context_objects"] = context.scene.objects
     
     return save_single(operator, context.scene, filepath, **kwargs_mod)
+
+

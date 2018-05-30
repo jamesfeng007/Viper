@@ -142,6 +142,39 @@ public:
 		std::vector<int> mUVIndices;
 	};
 
+	struct Texture
+	{
+		Texture()
+		{
+
+		}
+
+		Texture(char* _name, char* _fileName, char* _relFileName, int _alphaSource, bool _premultiplyAlpha, int _currentMappingType, char* _UVSet, int _wrapModeU, int _wrapModeV,
+			Vector3 _translation, Vector3 _scaling, bool _useMaterial, bool _useMipMap)
+			: name(std::string(_name)), fileName(std::string(_fileName)), relFileName(std::string(_relFileName)), alphaSource(_alphaSource), premultiplyAlpha(_premultiplyAlpha), 
+			currentMappingType(_currentMappingType), UVSet(std::string(_UVSet)), wrapModeU(_wrapModeU), wrapModeV(_wrapModeV), translation(_translation), 
+			scaling(_scaling), useMaterial(_useMaterial), useMipMap(_useMipMap)
+		{
+
+		}
+
+		std::string name;
+		std::string fileName;
+		std::string relFileName;
+		int alphaSource;
+		bool premultiplyAlpha;
+		int currentMappingType;
+		std::string UVSet;
+		int wrapModeU;
+		int wrapModeV;
+		Vector3 translation;
+		Vector3 scaling;
+		bool useMaterial;
+		bool useMipMap;
+		std::string parentMat;
+		std::string matProp;
+	};
+
 	struct Material
 	{
 		Material()
@@ -346,6 +379,9 @@ public:
 	void AddBone(char* name, Vector3 lclTranslation, Vector3 lclRotation, Vector3 lclScaling);
 	void AddBoneChild(char* child, char* parent);
 	void AddPoseNode(char* name, Mat4x4 transform);
+	void AddTexture(char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
+		Vector3 translation, Vector3 scaling, bool useMaterial, bool useMipMap);
+	void SetTextureMatProp(char* name, char* matName, char* matProp);
 
 	void AddSubDeformerIndex(char* mName, char* bName, int index);
 	void AddSubDeformerWeight(char* mName, char* bName, float weight);
@@ -356,6 +392,8 @@ public:
 	void SetChannelDefaultValue(char* takeName, char* modelName, int type, double value);
 	void AddChannelKey(char* takeName, char* modelName, int type, float frame, float value);
 	void SetFPS(float fps);
+
+	void SetAsASCII(bool asAscii) { mAsASCII = asAscii; }
 
 	void PrintMesh();
 	void PrintSkeleton();
@@ -398,5 +436,7 @@ private:
 	 std::map<std::string, Deformer> mDeformers;
 	 std::map<std::string, Pose> mPoses;
 	 std::map<std::string, Take> mTakes;
+	 std::map<std::string, Texture> mTextures;
 	 float mFps;
+	 bool mAsASCII;
 };
