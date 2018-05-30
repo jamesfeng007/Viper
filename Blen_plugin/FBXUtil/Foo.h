@@ -146,7 +146,7 @@ public:
 	{
 		Texture()
 		{
-
+			parentMat = std::vector<std::string>();
 		}
 
 		Texture(char* _name, char* _fileName, char* _relFileName, int _alphaSource, bool _premultiplyAlpha, int _currentMappingType, char* _UVSet, int _wrapModeU, int _wrapModeV,
@@ -155,7 +155,7 @@ public:
 			currentMappingType(_currentMappingType), UVSet(std::string(_UVSet)), wrapModeU(_wrapModeU), wrapModeV(_wrapModeV), translation(_translation), 
 			scaling(_scaling), useMaterial(_useMaterial), useMipMap(_useMipMap)
 		{
-
+			parentMat = std::vector<std::string>();
 		}
 
 		std::string name;
@@ -171,7 +171,7 @@ public:
 		Vector3 scaling;
 		bool useMaterial;
 		bool useMipMap;
-		std::string parentMat;
+		std::vector<std::string> parentMat;
 		std::string matProp;
 	};
 
@@ -182,9 +182,10 @@ public:
 
 		}
 
-		Material(char* mName, char* sName)
+		Material(char* mName, char* sName, Vector3 diffuse, Vector3 ambient, Vector3 emissive)
 			: materialName(std::string(mName)), shadingName(std::string(sName))
-			, emissiveColor(FbxDouble3(0.0, 0.0, 0.0)), ambientColor(FbxDouble3(1.0, 0.0, 0.0)), diffuseColor(FbxDouble3(1.0, 1.0, 0.0))
+			, emissiveColor(FbxDouble3(emissive.x, emissive.y, emissive.z))
+			, ambientColor(FbxDouble3(ambient.x, ambient.y, ambient.z)), diffuseColor(FbxDouble3(diffuse.x, diffuse.y, diffuse.z))
 		{
 
 		}
@@ -200,13 +201,22 @@ public:
 	{
 		Mesh()
 		{
-
+			mMatIndices = std::vector<int>();
 		}
 
-		Mesh(char* mName, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
-			: lclTranslation(_lclTranslation), lclRotation(_lclRotation), lclScaling(_lclScaling), mMeshName(std::string(mName))
+		Mesh(char* name)
+			: Mesh()
 		{
+			mMeshName = std::string(name);
+		}
 
+		Mesh(char* name, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
+			: Mesh()
+		{
+			lclTranslation = _lclTranslation;
+			lclRotation = _lclRotation; 
+			lclScaling = _lclScaling; 
+			mMeshName = std::string(name);
 		}
 
 		std::string mMeshName;
@@ -214,6 +224,7 @@ public:
 		Vector3 lclRotation;
 		Vector3 lclScaling;
 		std::vector<IntVector2> edges;
+		std::vector<int> mMatIndices;
 	};
 
 	struct Bone
@@ -369,13 +380,13 @@ public:
 	void AddUV(int uvIndex, float x, float y);
 	void AddIndex(int index);
 	void AddUVIndex(int uvIndex, int index);
-	void AddMatIndex(int index);
+	void AddMatIndex(char* name, int index);
 	void AddLoopStart(int start);
 	void AddSmoothing(int smooth);
 	void SetSmoothMode(int mode);
 	void SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca);
 	void AddMeshEdge(char* name, int startVertexIndex, int endVertexIndex);
-	void AddMaterial(char* mName, char* sName);
+	void AddMaterial(char* mName, char* sName, Vector3 diffuse, Vector3 ambient, Vector3 emissive);
 	void AddBone(char* name, Vector3 lclTranslation, Vector3 lclRotation, Vector3 lclScaling);
 	void AddBoneChild(char* child, char* parent);
 	void AddPoseNode(char* name, Mat4x4 transform);
@@ -414,6 +425,7 @@ private:
 	bool BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkeletonNode);
 	bool BuildTakes(FbxScene* pScene, FbxNode* pSkeletonNode);
 
+	Mesh& GetMesh(char* name);
 	SubDeformer& GetSubDeformer(const char* mName, const char* bName);
 	ModelAnim& GetModelAnim(char* takeName, char* modelName);
 	bool FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode, FbxSkin* lSkin);
@@ -422,14 +434,14 @@ private:
 	int val;
 	std::ofstream mLogFile;
 	std::streambuf * mCoutbuf;
-	Mesh mMesh;
+	std::map<std::string, Mesh> mMesh;
 	std::vector<Vector3> mVertices;
 	std::vector<Vector3> mNormals;
 	std::vector<int> mIndices;
 	std::vector<int> mLoopStart;
 	std::vector<int> mSmoothing;
 	std::map<int, LayerElementUVInfo> mUVInfos;
-	std::vector<int> mMatIndices;
+	
 	 int mSmoothMode; //FbxLayerElement::EMappingMode: eByPolygon-0, eByEdge-1
 	 std::vector<Material> mMaterials;
 	 std::map<std::string, Bone> mBones;

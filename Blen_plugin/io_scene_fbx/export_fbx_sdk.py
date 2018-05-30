@@ -1,5 +1,6 @@
 import os
 import time
+import array
 import math  # math.pi
 from ctypes import c_char_p, byref
 from collections import OrderedDict
@@ -7,7 +8,9 @@ from collections import OrderedDict
 import bpy
 import bpy_extras
 from mathutils import Vector, Matrix
-from .fbx_utils import ( ObjectWrapper, FBXExportSettingsMedia, get_blenderID_key, )
+from . import data_types
+from .fbx_utils import ( ObjectWrapper, FBXExportSettingsMedia, get_blenderID_key, BLENDER_OBJECT_TYPES_MESHLIKE, 
+                         BLENDER_OTHER_OBJECT_TYPES, )
 from print_util import PrintHelper
 
 from fbx_export import FBXExport, Vector3, Mat4x4, Vector4, ChannelType
@@ -235,8 +238,12 @@ def save_single(operator, scene, filepath="",
         use_mesh_edges=True,
         use_default_take=True,
         embed_textures=False,
+        use_mesh_modifiers_render=True,
         **kwargs
     ):
+    
+    # Clear cached ObjectWrappers (just in case...).
+    ObjectWrapper.cache_clear()    
     
     # Used for mesh and armature rotations
     mtx4_z90 = Matrix.Rotation(math.pi / 2.0, 4, 'Z')
@@ -264,6 +271,11 @@ def save_single(operator, scene, filepath="",
         set(),  # copy_set
         set(),  # embedded_set
     )
+    
+    if scene.world:
+        data_world = OrderedDict(((scene.world, get_blenderID_key(scene.world)),))
+    else:
+        data_world = OrderedDict()    
     
     class my_bone_class(object):
         __slots__ = ("blenName",
@@ -531,7 +543,7 @@ def save_single(operator, scene, filepath="",
         else:
             mat_shader = 'Phong'            
         
-        fbxSDKExport.add_material(c_char_p(matname.encode('utf-8')), c_char_p(mat_shader.encode('utf-8')))
+        
         
     def write_sub_deformer_skin(my_mesh, my_bone, weights):
         if my_mesh.fbxBoneParent:
@@ -705,6 +717,7 @@ def save_single(operator, scene, filepath="",
                         fbxSDKExport.add_uv_index(uvindex, uv2idx[uv])    
             
             del t_uv
+            
         if do_materials:
             is_mat_unique = len(my_mesh.blenMaterials) == 1
             if is_mat_unique:
@@ -724,7 +737,8 @@ def save_single(operator, scene, filepath="",
                 
                 for chunk in grouper_exact(t_mti, _nchunk):
                     for i in chunk:
-                        fbxSDKExport.add_mat_index(i)             
+                        pass
+                        #fbxSDKExport.add_mat_index(i)
             
         # add meshes here to clear because they are not used anywhere.
     meshes_to_clear = []
@@ -1018,6 +1032,49 @@ def save_single(operator, scene, filepath="",
     del tmp_obmapping
     # Finished finding groups we use
     
+    def fbx_data_mesh_elements(root, me_obj, mesh_mat_indices, data_meshes):
+        me_key, me, _free = data_meshes[me_obj]
+        
+        me_fbxmats_idx = mesh_mat_indices.get(me)
+        if me_fbxmats_idx is not None:
+            me_blmats = me.materials
+            if me_fbxmats_idx and me_blmats:
+                nbr_mats = len(me_fbxmats_idx)
+                if nbr_mats > 1:
+                    t_pm = array.array(data_types.ARRAY_INT32, (0,)) * len(me.polygons)
+                    me.polygons.foreach_get("material_index", t_pm)
+    
+                    # We have to validate mat indices, and map them to FBX indices.
+                    # Note a mat might not be in me_fbxmats_idx (e.g. node mats are ignored).
+                    blmats_to_fbxmats_idxs = [me_fbxmats_idx[m] for m in me_blmats if m in me_fbxmats_idx]
+                    mat_idx_limit = len(blmats_to_fbxmats_idxs)
+                    def_mat = blmats_to_fbxmats_idxs[0]
+                    _gen = (blmats_to_fbxmats_idxs[m] if m < mat_idx_limit else def_mat for m in t_pm)
+                    t_pm = array.array(data_types.ARRAY_INT32, _gen)
+                    
+                    for pm in t_pm:
+                        fbxSDKExport.add_mat_index(c_char_p(ob_obj.name.encode('utf-8')), pm)
+                    del t_pm
+        
+        
+    
+    def fbx_data_material_elements(root, mat):
+        ambient_color = (0.0, 0.0, 0.0)
+        if data_world:
+            ambient_color = next(iter(data_world.keys())).ambient_color
+        skip_mat = check_skip_material(mat)
+        node_mat = mat.use_nodes            
+        mat_type = b"Phong"
+        # Approximation...
+        if not skip_mat and not node_mat and mat.specular_shader not in {'COOKTORR', 'PHONG', 'BLINN'}:
+            mat_type = b"Lambert"
+
+        fbx_diffuse = Vector3(mat.diffuse_color[0], mat.diffuse_color[1], mat.diffuse_color[2])
+        fbx_ambient = Vector3(ambient_color[0], ambient_color[1], ambient_color[2])
+        fbx_emissive = fbx_diffuse
+            
+        fbxSDKExport.add_material(c_char_p(mat.name.encode('utf-8')), mat_type, byref(fbx_diffuse), byref(fbx_ambient), byref(fbx_emissive))
+    
     def check_skip_material(mat):
         """Simple helper to check whether we actually support exporting that material or not"""
         return mat.type not in {'SURFACE'}    
@@ -1117,6 +1174,53 @@ def save_single(operator, scene, filepath="",
         ob_obj = ObjectWrapper(ob)
         objects[ob_obj] = None
         
+    data_meshes = OrderedDict()
+    for ob_obj in objects:
+        if ob_obj.type not in BLENDER_OBJECT_TYPES_MESHLIKE:
+            continue
+        ob = ob_obj.bdata
+        use_org_data = True
+        org_ob_obj = None
+
+        # Do not want to systematically recreate a new mesh for dupliobject instances, kind of break purpose of those.
+        if ob_obj.is_dupli:
+            org_ob_obj = ObjectWrapper(ob)  # We get the "real" object wrapper from that dupli instance.
+            if org_ob_obj in data_meshes:
+                data_meshes[ob_obj] = data_meshes[org_ob_obj]
+                continue
+
+        is_ob_material = any(ms.link == 'OBJECT' for ms in ob.material_slots)
+
+        if use_mesh_modifiers or ob.type in BLENDER_OTHER_OBJECT_TYPES or is_ob_material:
+            # We cannot use default mesh in that case, or material would not be the right ones...
+            use_org_data = not (is_ob_material or ob.type in BLENDER_OTHER_OBJECT_TYPES)
+            tmp_mods = []
+            if use_org_data and ob.type == 'MESH':
+                # No need to create a new mesh in this case, if no modifier is active!
+                for mod in ob.modifiers:
+                    # For meshes, when armature export is enabled, disable Armature modifiers here!
+                    if mod.type == 'ARMATURE' and 'ARMATURE' in object_types:
+                        tmp_mods.append((mod, mod.show_render))
+                        mod.show_render = False
+                    if mod.show_render:
+                        use_org_data = False
+            if not use_org_data:
+                tmp_me = ob.to_mesh(
+                    scene,
+                    apply_modifiers=use_mesh_modifiers,
+                    settings='RENDER' if use_mesh_modifiers_render else 'PREVIEW',
+                )
+                data_meshes[ob_obj] = (get_blenderID_key(tmp_me), tmp_me, True)
+            # Re-enable temporary disabled modifiers.
+            for mod, show_render in tmp_mods:
+                mod.show_render = show_render
+        if use_org_data:
+            data_meshes[ob_obj] = (get_blenderID_key(ob.data), ob.data, False)
+
+        # In case "real" source object of that dupli did not yet still existed in data_meshes, create it now!
+        if org_ob_obj is not None:
+            data_meshes[org_ob_obj] = data_meshes[ob_obj]        
+        
     data_materials = OrderedDict()
     for ob_obj in objects:
         # If obj is not a valid object for materials, wrapper will just return an empty tuple...
@@ -1171,6 +1275,31 @@ def save_single(operator, scene, filepath="",
             else:
                 data_videos[img] = (get_blenderID_key(img), [tex])
                 
+    # Materials
+    mesh_mat_indices = OrderedDict()
+    _objs_indices = {}
+    for mat, (mat_key, ob_objs) in data_materials.items():
+        for ob_obj in ob_objs:
+            #connections.append((b"OO", get_fbx_uuid_from_key(mat_key), ob_obj.fbx_uuid, None))
+            # Get index of this mat for this object (or dupliobject).
+            # Mat indices for mesh faces are determined by their order in 'mat to ob' connections.
+            # Only mats for meshes currently...
+            # Note in case of dupliobjects a same me/mat idx will be generated several times...
+            # Should not be an issue in practice, and it's needed in case we export duplis but not the original!
+            if ob_obj.type not in BLENDER_OBJECT_TYPES_MESHLIKE:
+                continue
+            _mesh_key, me, _free = data_meshes[ob_obj]
+            idx = _objs_indices[ob_obj] = _objs_indices.get(ob_obj, -1) + 1
+            mesh_mat_indices.setdefault(me, OrderedDict())[mat] = idx
+    del _objs_indices
+
+
+    for me_obj in data_meshes:
+        fbx_data_mesh_elements(objects, me_obj, mesh_mat_indices, data_meshes)                
+                
+    for mat in data_materials:
+        fbx_data_material_elements(objects, mat)                
+                
     for tex in data_textures:
         fbx_data_texture_file_elements(objects, tex, data_textures)
         
@@ -1182,17 +1311,9 @@ def save_single(operator, scene, filepath="",
                 # texture -> material properties
                 #connections.append((b"OP", get_fbx_uuid_from_key(tex_key), get_fbx_uuid_from_key(mat_key), fbx_prop))
                 fbxSDKExport.set_texture_mat_prop(c_char_p(tex.name.encode('utf-8')), c_char_p(mat.name.encode('utf-8')), c_char_p(fbx_prop))
-                print("fbx_prop")
-                print(fbx_prop)
-                print(type(fbx_prop))
-                str = fbx_prop.decode("utf-8") 
-                print("str")
-                print(str)
-                print(type(str))
+
                 
-                
-        
-    del context_objects
+    del context_objects, objects
 
     # == WRITE OBJECTS TO THE FILE ==
     # == From now on we are building the FBX file from the information collected above (JCB)    
@@ -1222,8 +1343,8 @@ def save_single(operator, scene, filepath="",
     for my_bone in ob_bones:
         write_bone(my_bone)        
         
-    for matname, (mat, tex) in materials:
-        write_material(matname, mat)  # We only need to have a material per image pair, but no need to write any image info into the material (dumb fbx standard)        
+    #for matname, (mat, tex) in materials:
+        #write_material(matname, mat)  # We only need to have a material per image pair, but no need to write any image info into the material (dumb fbx standard)        
     
     for my_mesh in ob_meshes:
         if my_mesh.fbxArm:
@@ -1231,6 +1352,7 @@ def save_single(operator, scene, filepath="",
                 weights = None
             else:
                 weights = meshNormalizedWeights(my_mesh.blenObject, my_mesh.blenData)
+                
                 
             for my_bone in ob_bones:
                 if me in iter(my_bone.blenMeshes.values()):
@@ -1514,6 +1636,9 @@ def save_single(operator, scene, filepath="",
     #fbxSDKExport.print_takes()
     
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
+    
+    # Clear cached ObjectWrappers!
+    ObjectWrapper.cache_clear()    
     
     print('export sdk finished in %.4f sec.' % (time.process_time() - start_time))    
     

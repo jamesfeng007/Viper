@@ -645,6 +645,11 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             description="Apply modifiers to mesh objects (except Armature ones) - "
                         "WARNING: prevents exporting shape keys",
             default=True,
+            )
+    use_mesh_modifiers_render = BoolProperty(
+            name="Use Modifiers Render Setting",
+            description="Use render settings when applying modifiers to mesh objects",
+            default=True,
             )    
     mesh_smooth_type = EnumProperty(
         name="Smoothing",
@@ -722,6 +727,7 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         
         layout.prop(self, "object_types")
         layout.prop(self, "use_mesh_modifiers")
+        layout.prop(self, "use_mesh_modifiers_render")
         layout.prop(self, "mesh_smooth_type")
         layout.prop(self, "use_mesh_edges")
         layout.prop(self, "use_tspace")
