@@ -3,14 +3,15 @@ import time
 import array
 import math  # math.pi
 from ctypes import c_char_p, byref
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
+from itertools import chain
 
 import bpy
 import bpy_extras
 from mathutils import Vector, Matrix
 from . import data_types
 from .fbx_utils import ( ObjectWrapper, FBXExportSettingsMedia, get_blenderID_key, BLENDER_OBJECT_TYPES_MESHLIKE, 
-                         BLENDER_OTHER_OBJECT_TYPES, )
+                         BLENDER_OTHER_OBJECT_TYPES, nors_transformed_gen, )
 from print_util import PrintHelper
 
 from fbx_export import FBXExport, Vector3, Mat4x4, Vector4, ChannelType
@@ -221,6 +222,20 @@ def meshNormalizedWeights(ob, me):
 
     return groupNames, vWeightList
 
+FBXExportData = namedtuple("FBXExportData", (
+    "settings",
+))
+
+FBXExportSettings = namedtuple("FBXExportSettings", (
+    "bake_space_transform",
+))
+
+def fbx_data_from_scene(scene, settings):
+    
+    return FBXExportData(
+        settings,
+    )    
+
 def save_single(operator, scene, filepath="",
         global_matrix=None,
         context_objects=None,
@@ -239,6 +254,8 @@ def save_single(operator, scene, filepath="",
         use_default_take=True,
         embed_textures=False,
         use_mesh_modifiers_render=True,
+        bake_space_transform=False,
+        use_tspace=True,
         **kwargs
     ):
     
@@ -252,7 +269,11 @@ def save_single(operator, scene, filepath="",
         global_matrix = Matrix()
         global_scale = 1.0
     else:
-        global_scale = global_matrix.median_scale    
+        global_scale = global_matrix.median_scale
+        
+    global_matrix_inv = global_matrix.inverted()
+    # For transforming mesh normals.
+    global_matrix_inv_transposed = global_matrix_inv.transposed()        
     
     fbxSDKExport = FBXExport(5)
     
@@ -271,6 +292,12 @@ def save_single(operator, scene, filepath="",
         set(),  # copy_set
         set(),  # embedded_set
     )
+    
+    settings = FBXExportSettings(
+        bake_space_transform,
+    )
+    
+    scene_data = fbx_data_from_scene(scene, settings)
     
     if scene.world:
         data_world = OrderedDict(((scene.world, get_blenderID_key(scene.world)),))
@@ -1035,6 +1062,57 @@ def save_single(operator, scene, filepath="",
     def fbx_data_mesh_elements(root, me_obj, mesh_mat_indices, data_meshes):
         me_key, me, _free = data_meshes[me_obj]
         
+        do_bake_space_transform = me_obj.use_bake_space_transform(scene_data)
+        
+        geom_mat_no = Matrix(global_matrix_inv_transposed) if do_bake_space_transform else None
+        if geom_mat_no is not None:
+            # Remove translation & scaling!
+            geom_mat_no.translation = Vector()
+            geom_mat_no.normalize()        
+        
+        # Loop normals.
+        tspacenumber = 0
+        
+        me.calc_normals_split()
+        # tspace
+        if use_tspace:
+            tspacenumber = len(me.uv_layers)
+            if tspacenumber:
+                t_ln = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops) * 3
+                # t_lnw = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops)
+                for idx, uvlayer in enumerate(me.uv_layers):
+                    name = uvlayer.name
+                    me.calc_tangents(name)
+                    # Loop bitangents (aka binormals).
+                    # NOTE: this is not supported by importer currently.
+                    fbxSDKExport.set_binormal_name(c_char_p(ob_obj.name.encode('utf-8')), c_char_p(name.encode('utf-8')))
+                    
+                    me.loops.foreach_get("bitangent", t_ln)
+                    binormals = chain(*nors_transformed_gen(t_ln, geom_mat_no))
+                    for binormal in grouper_exact(binormals, 3):
+                        fbx_binormal = Vector3(binormal[0], binormal[1], binormal[2])
+                        fbxSDKExport.add_binormal(c_char_p(ob_obj.name.encode('utf-8')), fbx_binormal)
+                    # Binormal weights, no idea what it is.
+                    # elem_data_single_float64_array(lay_nor, b"BinormalsW", t_lnw)
+
+                    # Loop tangents.
+                    # NOTE: this is not supported by importer currently.
+                    fbxSDKExport.set_tangent_name(c_char_p(ob_obj.name.encode('utf-8')), c_char_p(name.encode('utf-8')))
+                    
+                    me.loops.foreach_get("tangent", t_ln)
+                    tangents = chain(*nors_transformed_gen(t_ln, geom_mat_no))
+                    for tangent in grouper_exact(tangents, 3):
+                        fbx_tangent = Vector3(tangent[0], tangent[1], tangent[2])
+                        fbxSDKExport.add_tangent(c_char_p(ob_obj.name.encode('utf-8')), fbx_tangent)                    
+                    # Tangent weights, no idea what it is.
+                    # elem_data_single_float64_array(lay_nor, b"TangentsW", t_lnw)
+
+                del t_ln
+                # del t_lnw
+                me.free_tangents()
+
+        me.free_normals_split()        
+        
         me_fbxmats_idx = mesh_mat_indices.get(me)
         if me_fbxmats_idx is not None:
             me_blmats = me.materials
@@ -1355,8 +1433,9 @@ def save_single(operator, scene, filepath="",
                 
                 
             for my_bone in ob_bones:
-                if me in iter(my_bone.blenMeshes.values()):
-                    write_sub_deformer_skin(my_mesh, my_bone, weights)
+                for me in iter(my_bone.blenMeshes.values()):
+                    if me:
+                        write_sub_deformer_skin(my_mesh, my_bone, weights)
                     
     for fbxName, _matrix in pose_items:
         matrix = _matrix if _matrix else Matrix()
@@ -1632,7 +1711,7 @@ def save_single(operator, scene, filepath="",
     del ob_meshes[:]
     
     #fbxSDKExport.print_skeleton()
-    fbxSDKExport.print_mesh()
+    #fbxSDKExport.print_mesh()
     #fbxSDKExport.print_takes()
     
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))

@@ -122,6 +122,11 @@ bool Foo::BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeleton
 		return true;
 	}
 
+	if (mDeformers.size() == 0)
+	{
+		return true;
+	}
+
 	FbxGeometry* lMeshAttribute = (FbxGeometry*)pMeshNode->GetNodeAttribute();
 	FbxSkin* lSkin = FbxSkin::Create(pScene, "lSkin");
 
@@ -160,6 +165,31 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 		{
 			lGeometryElementNormal->GetDirectArray().Add(FbxVector4(mNormals[i].x, mNormals[i].y, mNormals[i].z));
 		}
+
+		if (mesh.mTangents.size() > 0)
+		{
+			FbxGeometryElementTangent* lGeometryElementTangent = lMesh->CreateElementTangent();
+			lGeometryElementTangent->SetName(mesh.tangentName.c_str());
+			lGeometryElementTangent->SetMappingMode(FbxLayerElement::eByPolygonVertex);
+			lGeometryElementTangent->SetReferenceMode(FbxLayerElement::eDirect);
+			for (int i = 0; i < mesh.mTangents.size(); ++i)
+			{
+				lGeometryElementTangent->GetDirectArray().Add(FbxVector4(mesh.mTangents[i].x, mesh.mTangents[i].y, mesh.mTangents[i].z));
+			}
+		}
+
+		if (mesh.mBinormals.size() > 0)
+		{
+			FbxGeometryElementBinormal* lGeometryElementBinormal = lMesh->CreateElementBinormal();
+			lGeometryElementBinormal->SetName(mesh.binormalName.c_str());
+			lGeometryElementBinormal->SetMappingMode(FbxLayerElement::eByPolygonVertex);
+			lGeometryElementBinormal->SetReferenceMode(FbxLayerElement::eDirect);
+			for (int i = 0; i < mesh.mBinormals.size(); ++i)
+			{
+				lGeometryElementBinormal->GetDirectArray().Add(FbxVector4(mesh.mBinormals[i].x, mesh.mBinormals[i].y, mesh.mBinormals[i].z));
+			}
+		}
+		
 
 		FbxLayer* lLayer = lMesh->GetLayer(0);
 		if (lLayer == NULL)
@@ -545,6 +575,30 @@ Foo::Mesh& Foo::GetMesh(char* name)
 	return mMesh.at(meshName);
 }
 
+void Foo::AddTangent(char* name, Vector3 tangent)
+{
+	Mesh& mesh = GetMesh(name);
+	mesh.mTangents.push_back(tangent);
+}
+
+void Foo::AddBinormal(char* name, Vector3 binormal)
+{
+	Mesh& mesh = GetMesh(name);
+	mesh.mBinormals.push_back(binormal);
+}
+
+void Foo::SetTangentName(char* name, char* tangentName)
+{
+	Mesh& mesh = GetMesh(name);
+	mesh.tangentName = std::string(tangentName);
+}
+
+void Foo::SetBinormalName(char* name, char* binormalName)
+{
+	Mesh& mesh = GetMesh(name);
+	mesh.binormalName = std::string(binormalName);
+}
+
 void Foo::AddMatIndex(char* name, int index)
 {
 	Mesh& mesh = GetMesh(name);
@@ -868,6 +922,16 @@ void Foo::PrintMesh()
 			std::cout << "normal[ " << n << " ]" << std::endl;
 		}
 
+		for (const Vector3& tan : mesh.mTangents)
+		{
+			std::cout << "tangent[ " << tan << " ]" << std::endl;
+		}
+
+		for (const Vector3& bino : mesh.mBinormals)
+		{
+			std::cout << "binormal[ " << bino << " ]" << std::endl;
+		}
+
 		std::cout << "start[ ";
 		for (int s : mLoopStart)
 		{
@@ -1002,6 +1066,10 @@ extern "C"
 	DLLEXPORT void Foo_AddUV(Foo* foo, int uvIndex, float x, float y) { foo->AddUV(uvIndex, x, y); }
 	DLLEXPORT void Foo_AddIndex(Foo* foo, int n) { foo->AddIndex(n); }
 	DLLEXPORT void Foo_AddMatIndex(Foo* foo, char* name, int n) { foo->AddMatIndex(name, n); }
+	DLLEXPORT void Foo_AddTangent(Foo* foo, char* name, Foo::Vector3 tan) { foo->AddTangent(name, tan); }
+	DLLEXPORT void Foo_AddBinormal(Foo* foo, char* name, Foo::Vector3 bino) { foo->AddBinormal(name, bino); }
+	DLLEXPORT void Foo_SetTangentName(Foo* foo, char* name, char* tangentName) { foo->SetTangentName(name, tangentName); }
+	DLLEXPORT void Foo_SetBinormalName(Foo* foo, char* name, char* binormalName) { foo->SetBinormalName(name, binormalName); }
 	DLLEXPORT void Foo_AddUVIndex(Foo* foo, int uvIndex, int n) { foo->AddUVIndex(uvIndex, n); }
 	DLLEXPORT void Foo_AddLoopStart(Foo* foo, int n) { foo->AddLoopStart(n); }
 	DLLEXPORT void Foo_AddMeshEdge(Foo* foo, char* name, int s, int e) { foo->AddMeshEdge(name, s, e); }

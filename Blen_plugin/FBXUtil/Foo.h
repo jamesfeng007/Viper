@@ -202,6 +202,8 @@ public:
 		Mesh()
 		{
 			mMatIndices = std::vector<int>();
+			mBinormals = std::vector<Vector3>();
+			mTangents = std::vector<Vector3>();
 		}
 
 		Mesh(char* name)
@@ -225,6 +227,10 @@ public:
 		Vector3 lclScaling;
 		std::vector<IntVector2> edges;
 		std::vector<int> mMatIndices;
+		std::vector<Vector3> mBinormals;
+		std::string binormalName;
+		std::vector<Vector3> mTangents;
+		std::string tangentName;
 	};
 
 	struct Bone
@@ -381,6 +387,10 @@ public:
 	void AddIndex(int index);
 	void AddUVIndex(int uvIndex, int index);
 	void AddMatIndex(char* name, int index);
+	void AddTangent(char* name, Vector3 tangent);
+	void AddBinormal(char* name, Vector3 binormal);
+	void SetTangentName(char* name, char* tangentName);
+	void SetBinormalName(char* name, char* binormalName);
 	void AddLoopStart(int start);
 	void AddSmoothing(int smooth);
 	void SetSmoothMode(int mode);

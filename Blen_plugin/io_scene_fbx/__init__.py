@@ -718,6 +718,13 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             name="Embed Textures",
             description="Embed textures in FBX binary file (only for \"Copy\" path mode!)",
             default=False,
+            )
+    bake_space_transform = BoolProperty(
+            name="!EXPERIMENTAL! Apply Transform",
+            description="Bake space transform into object data, avoids getting unwanted rotations to objects when "
+                        "target space is not aligned with Blender's space "
+                        "(WARNING! experimental option, use at own risks, known broken with armatures/animations)",
+            default=False,
             )    
     
     def draw(self, context):
@@ -746,7 +753,8 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         row.prop(self, "path_mode")        
         sub = row.row(align=True)
         sub.enabled = (self.path_mode == 'COPY')
-        sub.prop(self, "embed_textures", text="", icon='PACKAGE' if self.embed_textures else 'UGLYPACKAGE')        
+        sub.prop(self, "embed_textures", text="", icon='PACKAGE' if self.embed_textures else 'UGLYPACKAGE')
+        layout.prop(self, "bake_space_transform")
         
         
     def execute(self, context):
