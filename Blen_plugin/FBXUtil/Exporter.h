@@ -8,10 +8,10 @@
 
 #define DLLEXPORT __declspec(dllexport)
 
-class Foo
+class Exporter
 {
 public:
-	Foo(int);
+	Exporter();
 
 	template<typename T>
 	struct Vector2
@@ -441,7 +441,6 @@ private:
 	bool FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode, FbxSkin* lSkin);
 	bool FillDefaultValueKeys(FbxAnimCurveNode* animCurveNode, FbxAnimCurve* animCurve, const char* channelName, const Channel& channel);
 private:
-	int val;
 	std::ofstream mLogFile;
 	std::streambuf * mCoutbuf;
 	std::map<std::string, Mesh> mMesh;

@@ -1,14 +1,13 @@
-#include "Foo.h"
+#include "Exporter.h"
 #include "Common/Common.h"
 #include <cmath>
 
-Foo::Foo(int n)
+Exporter::Exporter()
 {
-	val = n;
 	mAsASCII = false;
 	mLogFile = std::ofstream("ExportFBXSdk.log");
-	mVertices = std::vector<Foo::Vector3>();
-	mNormals = std::vector<Foo::Vector3>();
+	mVertices = std::vector<Exporter::Vector3>();
+	mNormals = std::vector<Exporter::Vector3>();
 	mIndices = std::vector<int>();
 	mLoopStart = std::vector<int>();
 	mSmoothing = std::vector<int>();
@@ -23,7 +22,7 @@ Foo::Foo(int n)
 	std::cout.rdbuf(mLogFile.rdbuf()); //redirect std::cout to out.txt!
 }
 
-bool Foo::BuildArmature(FbxScene* pScene, FbxNode*& pSkeletonNode)
+bool Exporter::BuildArmature(FbxScene* pScene, FbxNode*& pSkeletonNode)
 {
 	std::map<std::string, FbxNode*> reg = std::map<std::string, FbxNode*>();
 
@@ -58,7 +57,7 @@ bool Foo::BuildArmature(FbxScene* pScene, FbxNode*& pSkeletonNode)
 	return true;
 }
 
-bool Foo::FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode, FbxSkin* lSkin)
+bool Exporter::FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode, FbxSkin* lSkin)
 {
 	if (pMeshNode == nullptr || pSkeletonNode == nullptr)
 	{
@@ -115,7 +114,7 @@ bool Foo::FillDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonN
 	return true;
 }
 
-bool Foo::BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode)
+bool Exporter::BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeletonNode)
 {
 	if (pMeshNode == nullptr || pSkeletonNode == nullptr)
 	{
@@ -139,7 +138,7 @@ bool Foo::BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSkeleton
 	return true;
 }
 
-bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
+bool Exporter::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 {
 	if (mVertices.empty())
 	{
@@ -198,9 +197,9 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 			lLayer = lMesh->GetLayer(0);
 		}
 
-		for (std::pair<int, Foo::LayerElementUVInfo> _uvInfo : mUVInfos)
+		for (std::pair<int, Exporter::LayerElementUVInfo> _uvInfo : mUVInfos)
 		{
-			Foo::LayerElementUVInfo uvInfo = _uvInfo.second;
+			Exporter::LayerElementUVInfo uvInfo = _uvInfo.second;
 			FbxGeometryElementUV* lUVElement = lMesh->CreateElementUV(uvInfo.name.c_str());
 			lUVElement->SetMappingMode(FbxGeometryElement::eByPolygonVertex);
 			lUVElement->SetReferenceMode(FbxGeometryElement::eIndexToDirect);
@@ -352,7 +351,7 @@ bool Foo::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 	return true;
 }
 
-bool Foo::BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkeletonNode)
+bool Exporter::BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkeletonNode)
 {
 	if (pMeshNode == nullptr || pSkeletonNode == nullptr)
 	{
@@ -398,7 +397,7 @@ bool Foo::BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkeletonNod
 	return true;
 }
 
-bool Foo::BuildTakes(FbxScene* pScene, FbxNode* pSkeletonNode)
+bool Exporter::BuildTakes(FbxScene* pScene, FbxNode* pSkeletonNode)
 {
 	if (pSkeletonNode == nullptr)
 	{
@@ -484,7 +483,7 @@ bool Foo::BuildTakes(FbxScene* pScene, FbxNode* pSkeletonNode)
 	return true;
 }
 
-bool Foo::FillDefaultValueKeys(FbxAnimCurveNode* animCurveNode, FbxAnimCurve* animCurve, const char* channelName, const Channel& channel)
+bool Exporter::FillDefaultValueKeys(FbxAnimCurveNode* animCurveNode, FbxAnimCurve* animCurve, const char* channelName, const Channel& channel)
 {
 	animCurveNode->SetChannelValue(channelName, channel.defaultValue);
 
@@ -504,7 +503,7 @@ bool Foo::FillDefaultValueKeys(FbxAnimCurveNode* animCurveNode, FbxAnimCurve* an
 	return true;
 }
 
-bool Foo::CreateScene(FbxScene* pScene)
+bool Exporter::CreateScene(FbxScene* pScene)
 {
 	FbxNode* pMeshNode = nullptr;
 	FbxNode* pSkeletonNode = nullptr;
@@ -537,33 +536,33 @@ bool Foo::CreateScene(FbxScene* pScene)
 	return true;
 }
 
-void Foo::CreateUVInfo(int uvIndex, char* name)
+void Exporter::CreateUVInfo(int uvIndex, char* name)
 {
-	Foo::LayerElementUVInfo uvInfo = LayerElementUVInfo(uvIndex, name);
+	Exporter::LayerElementUVInfo uvInfo = LayerElementUVInfo(uvIndex, name);
 	mUVInfos.insert(std::make_pair(uvIndex, uvInfo));
 }
 
-void Foo::AddVertex(float x, float y, float z)
+void Exporter::AddVertex(float x, float y, float z)
 {
-	mVertices.push_back(Foo::Vector3(x, y, z));
+	mVertices.push_back(Exporter::Vector3(x, y, z));
 }
 
-void Foo::AddNormal(float x, float y, float z)
+void Exporter::AddNormal(float x, float y, float z)
 {
-	mNormals.push_back(Foo::Vector3(x, y, z));
+	mNormals.push_back(Exporter::Vector3(x, y, z));
 }
 
-void Foo::AddUV(int uvIndex, float x, float y)
+void Exporter::AddUV(int uvIndex, float x, float y)
 {
-	mUVInfos.at(uvIndex).mUVs.push_back(Foo::UV(x, y));
+	mUVInfos.at(uvIndex).mUVs.push_back(Exporter::UV(x, y));
 }
 
-void Foo::AddUVIndex(int uvIndex, int index)
+void Exporter::AddUVIndex(int uvIndex, int index)
 {
 	mUVInfos.at(uvIndex).mUVIndices.push_back(index);
 }
 
-Foo::Mesh& Foo::GetMesh(char* name)
+Exporter::Mesh& Exporter::GetMesh(char* name)
 {
 	std::string meshName = std::string(name);
 	std::map<std::string, Mesh>::iterator ite = mMesh.find(meshName);
@@ -575,63 +574,63 @@ Foo::Mesh& Foo::GetMesh(char* name)
 	return mMesh.at(meshName);
 }
 
-void Foo::AddTangent(char* name, Vector3 tangent)
+void Exporter::AddTangent(char* name, Vector3 tangent)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.mTangents.push_back(tangent);
 }
 
-void Foo::AddBinormal(char* name, Vector3 binormal)
+void Exporter::AddBinormal(char* name, Vector3 binormal)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.mBinormals.push_back(binormal);
 }
 
-void Foo::SetTangentName(char* name, char* tangentName)
+void Exporter::SetTangentName(char* name, char* tangentName)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.tangentName = std::string(tangentName);
 }
 
-void Foo::SetBinormalName(char* name, char* binormalName)
+void Exporter::SetBinormalName(char* name, char* binormalName)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.binormalName = std::string(binormalName);
 }
 
-void Foo::AddMatIndex(char* name, int index)
+void Exporter::AddMatIndex(char* name, int index)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.mMatIndices.push_back(index);
 }
 
-void Foo::AddIndex(int index)
+void Exporter::AddIndex(int index)
 {
 	mIndices.push_back(index);
 }
 
-void Foo::AddLoopStart(int start)
+void Exporter::AddLoopStart(int start)
 {
 	mLoopStart.push_back(start);
 }
 
-void Foo::AddSmoothing(int smooth)
+void Exporter::AddSmoothing(int smooth)
 {
 	mSmoothing.push_back(smooth);
 }
 
-void Foo::SetSmoothMode(int mode)
+void Exporter::SetSmoothMode(int mode)
 {
 	mSmoothMode = mode;
 }
 
-void Foo::AddMeshEdge(char* name, int startVertexIndex, int endVertexIndex)
+void Exporter::AddMeshEdge(char* name, int startVertexIndex, int endVertexIndex)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.edges.push_back(IntVector2(startVertexIndex, endVertexIndex));
 }
 
-void Foo::SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca)
+void Exporter::SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca)
 {
 	Mesh& mesh = GetMesh(name);
 	mesh.mMeshName = std::string(name);
@@ -640,44 +639,44 @@ void Foo::SetMeshProperty(char* name, Vector3 trans, Vector3 rot, Vector3 sca)
 	mesh.lclScaling = sca;
 }
 
-void Foo::AddMaterial(char* mName, char* sName, Vector3 diffuse, Vector3 ambient, Vector3 emissive)
+void Exporter::AddMaterial(char* mName, char* sName, Vector3 diffuse, Vector3 ambient, Vector3 emissive)
 {
 	Material mat = Material(mName, sName, diffuse, ambient, emissive);
 	mMaterials.push_back(mat);
 }
 
-void Foo::AddBone(char* name, Vector3 lclTranslation, Vector3 lclRotation, Vector3 lclScaling)
+void Exporter::AddBone(char* name, Vector3 lclTranslation, Vector3 lclRotation, Vector3 lclScaling)
 {
 	mBones.insert(make_pair(std::string(name), Bone(name, lclTranslation, lclRotation, lclScaling)));
 }
 
-void Foo::AddBoneChild(char* child, char* parent)
+void Exporter::AddBoneChild(char* child, char* parent)
 {
 	Bone& parentB = mBones.at(std::string(parent));
 	Bone& childB = mBones.at(std::string(child));
 	childB.parentName = parentB.boneName;
 }
 
-void Foo::SetTextureMatProp(char* name, char* matName, char* matProp)
+void Exporter::SetTextureMatProp(char* name, char* matName, char* matProp)
 {
 	Texture& tex = mTextures.at(std::string(name));
 	tex.parentMat.push_back(matName);
 	tex.matProp = std::string(matProp);
 }
 
-void Foo::AddTexture(char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
+void Exporter::AddTexture(char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
 	Vector3 translation, Vector3 scaling, bool useMaterial, bool useMipMap)
 {
 	mTextures.insert(make_pair(std::string(name), Texture(name, fileName, relFileName, alphaSource, premultiplyAlpha, currentMappingType, UVSet, wrapModeU, wrapModeV,
 		translation, scaling, useMaterial, useMipMap)));
 }
 
-void Foo::AddPoseNode(char* name, Mat4x4 transform)
+void Exporter::AddPoseNode(char* name, Mat4x4 transform)
 {
 	mPoses.insert(make_pair(std::string(name), Pose(name, transform)));
 }
 
-Foo::SubDeformer& Foo::GetSubDeformer(const char* mName, const char* bName)
+Exporter::SubDeformer& Exporter::GetSubDeformer(const char* mName, const char* bName)
 {
 	std::string meshName = std::string(mName);
 	std::string boneName = std::string(bName);
@@ -698,32 +697,32 @@ Foo::SubDeformer& Foo::GetSubDeformer(const char* mName, const char* bName)
 	return subDeformers.at(boneName);
 }
 
-void Foo::SetSubDeformerTransformLink(char* mName, char* bName, Mat4x4 transformLink)
+void Exporter::SetSubDeformerTransformLink(char* mName, char* bName, Mat4x4 transformLink)
 {
 	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
 	subDeformer.transformLink = transformLink;
 }
 
-void Foo::SetSubDeformerTransform(char* mName, char* bName, Mat4x4 transform, Vector4 quat)
+void Exporter::SetSubDeformerTransform(char* mName, char* bName, Mat4x4 transform, Vector4 quat)
 {
 	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
 	subDeformer.transform = transform;
 	subDeformer.quat = quat;
 }
 
-void Foo::AddSubDeformerWeight(char* mName, char* bName, float weight)
+void Exporter::AddSubDeformerWeight(char* mName, char* bName, float weight)
 {
 	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
 	subDeformer.weights.push_back(weight);
 }
 
-void Foo::AddSubDeformerIndex(char* mName, char* bName, int index)
+void Exporter::AddSubDeformerIndex(char* mName, char* bName, int index)
 {
 	SubDeformer& subDeformer = GetSubDeformer(mName, bName);
 	subDeformer.indexes.push_back(index);
 }
 
-Foo::ModelAnim& Foo::GetModelAnim(char* tName, char* mName)
+Exporter::ModelAnim& Exporter::GetModelAnim(char* tName, char* mName)
 {
 	std::string takeName = std::string(tName);
 	std::string modelName = std::string(mName);
@@ -744,7 +743,7 @@ Foo::ModelAnim& Foo::GetModelAnim(char* tName, char* mName)
 	return models.at(modelName);
 }
 
-void Foo::SetTimeSpan(char* tName, float lStart, float lEnd, float rStart, float rEnd)
+void Exporter::SetTimeSpan(char* tName, float lStart, float lEnd, float rStart, float rEnd)
 {
 	std::string takeName = std::string(tName);
 
@@ -762,7 +761,7 @@ void Foo::SetTimeSpan(char* tName, float lStart, float lEnd, float rStart, float
 	take.referenceTimeSpan[1] = rEnd;
 }
 
-void Foo::SetChannelDefaultValue(char* takeName, char* modelName, int type, double value)
+void Exporter::SetChannelDefaultValue(char* takeName, char* modelName, int type, double value)
 {
 	if (type >= ChannelType::ChannelMax)
 	{
@@ -775,7 +774,7 @@ void Foo::SetChannelDefaultValue(char* takeName, char* modelName, int type, doub
 	model.channels[channelType].defaultValue = value;
 }
 
-void Foo::AddChannelKey(char* takeName, char* modelName, int type, float frame, float value)
+void Exporter::AddChannelKey(char* takeName, char* modelName, int type, float frame, float value)
 {
 	if (type >= ChannelType::ChannelMax)
 	{
@@ -788,12 +787,12 @@ void Foo::AddChannelKey(char* takeName, char* modelName, int type, float frame, 
 	model.channels[channelType].keys.push_back(Key(frame, value));
 }
 
-void Foo::SetFPS(float fps)
+void Exporter::SetFPS(float fps)
 {
 	mFps = fps;
 }
 
-void Foo::PrintTakes()
+void Exporter::PrintTakes()
 {
 	std::cout << "FPS: " << mFps << std::endl;
 	for (std::pair<std::string, Take> _take : mTakes)
@@ -852,7 +851,7 @@ void Foo::PrintTakes()
 	}
 }
 
-void Foo::PrintSkeleton()
+void Exporter::PrintSkeleton()
 {
 	for (std::pair<std::string, Bone> _bone : mBones)
 	{
@@ -899,9 +898,9 @@ void Foo::PrintSkeleton()
 	}
 }
 
-void Foo::PrintMesh()
+void Exporter::PrintMesh()
 {
-	for (Foo::Vector3 v : mVertices)
+	for (Exporter::Vector3 v : mVertices)
 	{
 		std::cout << "vertex[ " << v << " ]" << std::endl;
 	}
@@ -917,7 +916,7 @@ void Foo::PrintMesh()
 		}
 		std::cout << " ]" << std::endl;
 
-		for (Foo::Vector3 n : mNormals)
+		for (Exporter::Vector3 n : mNormals)
 		{
 			std::cout << "normal[ " << n << " ]" << std::endl;
 		}
@@ -942,7 +941,7 @@ void Foo::PrintMesh()
 		std::cout << "mesh name: " << mesh.mMeshName << std::endl;
 		std::cout << "mesh translation: " << mesh.lclTranslation << " rotation: " << mesh.lclRotation << " scale: " << mesh.lclScaling << std::endl;
 
-		for (const Foo::IntVector2& edge : mesh.edges)
+		for (const Exporter::IntVector2& edge : mesh.edges)
 		{
 			std::cout << "edge" << edge << std::endl;
 		}
@@ -954,11 +953,11 @@ void Foo::PrintMesh()
 		}
 		std::cout << std::endl;
 
-		for (std::pair<int, Foo::LayerElementUVInfo> _uvInfo : mUVInfos)
+		for (std::pair<int, Exporter::LayerElementUVInfo> _uvInfo : mUVInfos)
 		{
-			Foo::LayerElementUVInfo uvInfo = _uvInfo.second;
+			Exporter::LayerElementUVInfo uvInfo = _uvInfo.second;
 			std::cout << "uv Index: " << uvInfo.uvIndex << " name: " << uvInfo.name << std::endl;
-			for (Foo::UV uv : uvInfo.mUVs)
+			for (Exporter::UV uv : uvInfo.mUVs)
 			{
 				std::cout << "uv[ " << uv.x << ", " << uv.y << "]" << std::endl;
 			}
@@ -1005,7 +1004,7 @@ void Foo::PrintMesh()
 	
 }
 
-bool Foo::Export(char* filePath)
+bool Exporter::Export(char* filePath)
 {
 	std::cout.rdbuf(mCoutbuf); //reset to standard output again
 	mLogFile.flush();
@@ -1036,19 +1035,19 @@ bool Foo::Export(char* filePath)
 	return true;
 }
 
-std::ostream& operator<< (std::ostream &os, const Foo::IntVector2& vec)
+std::ostream& operator<< (std::ostream &os, const Exporter::IntVector2& vec)
 {
 	os << "[ " << vec.x << ", " << vec.y << "]";
 	return os;
 }
 
-std::ostream& operator<< (std::ostream &os, const Foo::Vector3& vec)
+std::ostream& operator<< (std::ostream &os, const Exporter::Vector3& vec)
 {
 	os << "[ " << vec.x << ", " << vec.y << ", " << vec.z << "]";
 	return os;
 }
 
-std::ostream& operator<< (std::ostream &os, const Foo::Mat4x4& mat)
+std::ostream& operator<< (std::ostream &os, const Exporter::Mat4x4& mat)
 {
 	os << "[ " << mat.x0 << ", " << mat.x1 << ", " << mat.x2 << ", " << mat.x3 << "]" << std::endl
 		<< "[ " << mat.y0 << ", " << mat.y1 << ", " << mat.y2 << ", " << mat.y3 << "]" << std::endl
@@ -1059,49 +1058,49 @@ std::ostream& operator<< (std::ostream &os, const Foo::Mat4x4& mat)
 
 extern "C"
 {
-	DLLEXPORT Foo* Foo_new(int n) { return new Foo(n); }
-	DLLEXPORT void Foo_AddVertex(Foo* foo, float x, float y, float z) { foo->AddVertex(x, y, z); }
-	DLLEXPORT void Foo_AddNormal(Foo* foo, float x, float y, float z) { foo->AddNormal(x, y, z); }
-	DLLEXPORT void Foo_CreateUVInfo(Foo* foo, int uvIndex, char* name) { foo->CreateUVInfo(uvIndex, name); }
-	DLLEXPORT void Foo_AddUV(Foo* foo, int uvIndex, float x, float y) { foo->AddUV(uvIndex, x, y); }
-	DLLEXPORT void Foo_AddIndex(Foo* foo, int n) { foo->AddIndex(n); }
-	DLLEXPORT void Foo_AddMatIndex(Foo* foo, char* name, int n) { foo->AddMatIndex(name, n); }
-	DLLEXPORT void Foo_AddTangent(Foo* foo, char* name, Foo::Vector3 tan) { foo->AddTangent(name, tan); }
-	DLLEXPORT void Foo_AddBinormal(Foo* foo, char* name, Foo::Vector3 bino) { foo->AddBinormal(name, bino); }
-	DLLEXPORT void Foo_SetTangentName(Foo* foo, char* name, char* tangentName) { foo->SetTangentName(name, tangentName); }
-	DLLEXPORT void Foo_SetBinormalName(Foo* foo, char* name, char* binormalName) { foo->SetBinormalName(name, binormalName); }
-	DLLEXPORT void Foo_AddUVIndex(Foo* foo, int uvIndex, int n) { foo->AddUVIndex(uvIndex, n); }
-	DLLEXPORT void Foo_AddLoopStart(Foo* foo, int n) { foo->AddLoopStart(n); }
-	DLLEXPORT void Foo_AddMeshEdge(Foo* foo, char* name, int s, int e) { foo->AddMeshEdge(name, s, e); }
-	DLLEXPORT void Foo_AddSmoothing(Foo* foo, int s) { foo->AddSmoothing(s); }
-	DLLEXPORT void Foo_SetSmoothMode(Foo* foo, int m) { foo->SetSmoothMode(m); }
-	DLLEXPORT void Foo_SetMeshProperty(Foo* foo, char* name, Foo::Vector3 trans, Foo::Vector3 rot, Foo::Vector3 sca) 
-		{ foo->SetMeshProperty(name, trans, rot, sca); }
-	DLLEXPORT void Foo_AddMaterial(Foo* foo, char* mName, char* sName, Foo::Vector3 diffuse, Foo::Vector3 ambient, Foo::Vector3 emissive) 
-	{ foo->AddMaterial(mName, sName, diffuse, ambient, emissive); }
-	DLLEXPORT void Foo_AddTexture(Foo* foo, char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
-		Foo::Vector3 translation, Foo::Vector3 scaling, bool useMaterial, bool useMipMap) { foo->AddTexture(name, fileName, relFileName, alphaSource, premultiplyAlpha, currentMappingType, UVSet, 
+	DLLEXPORT Exporter* Exporter_new() { return new Exporter(); }
+	DLLEXPORT void Exporter_AddVertex(Exporter* exporter, float x, float y, float z) { exporter->AddVertex(x, y, z); }
+	DLLEXPORT void Exporter_AddNormal(Exporter* exporter, float x, float y, float z) { exporter->AddNormal(x, y, z); }
+	DLLEXPORT void Exporter_CreateUVInfo(Exporter* exporter, int uvIndex, char* name) { exporter->CreateUVInfo(uvIndex, name); }
+	DLLEXPORT void Exporter_AddUV(Exporter* exporter, int uvIndex, float x, float y) { exporter->AddUV(uvIndex, x, y); }
+	DLLEXPORT void Exporter_AddIndex(Exporter* exporter, int n) { exporter->AddIndex(n); }
+	DLLEXPORT void Exporter_AddMatIndex(Exporter* exporter, char* name, int n) { exporter->AddMatIndex(name, n); }
+	DLLEXPORT void Exporter_AddTangent(Exporter* exporter, char* name, Exporter::Vector3 tan) { exporter->AddTangent(name, tan); }
+	DLLEXPORT void Exporter_AddBinormal(Exporter* exporter, char* name, Exporter::Vector3 bino) { exporter->AddBinormal(name, bino); }
+	DLLEXPORT void Exporter_SetTangentName(Exporter* exporter, char* name, char* tangentName) { exporter->SetTangentName(name, tangentName); }
+	DLLEXPORT void Exporter_SetBinormalName(Exporter* exporter, char* name, char* binormalName) { exporter->SetBinormalName(name, binormalName); }
+	DLLEXPORT void Exporter_AddUVIndex(Exporter* exporter, int uvIndex, int n) { exporter->AddUVIndex(uvIndex, n); }
+	DLLEXPORT void Exporter_AddLoopStart(Exporter* exporter, int n) { exporter->AddLoopStart(n); }
+	DLLEXPORT void Exporter_AddMeshEdge(Exporter* exporter, char* name, int s, int e) { exporter->AddMeshEdge(name, s, e); }
+	DLLEXPORT void Exporter_AddSmoothing(Exporter* exporter, int s) { exporter->AddSmoothing(s); }
+	DLLEXPORT void Exporter_SetSmoothMode(Exporter* exporter, int m) { exporter->SetSmoothMode(m); }
+	DLLEXPORT void Exporter_SetMeshProperty(Exporter* exporter, char* name, Exporter::Vector3 trans, Exporter::Vector3 rot, Exporter::Vector3 sca) 
+		{ exporter->SetMeshProperty(name, trans, rot, sca); }
+	DLLEXPORT void Exporter_AddMaterial(Exporter* exporter, char* mName, char* sName, Exporter::Vector3 diffuse, Exporter::Vector3 ambient, Exporter::Vector3 emissive) 
+	{ exporter->AddMaterial(mName, sName, diffuse, ambient, emissive); }
+	DLLEXPORT void Exporter_AddTexture(Exporter* exporter, char* name, char* fileName, char* relFileName, int alphaSource, bool premultiplyAlpha, int currentMappingType, char* UVSet, int wrapModeU, int wrapModeV,
+		Exporter::Vector3 translation, Exporter::Vector3 scaling, bool useMaterial, bool useMipMap) { exporter->AddTexture(name, fileName, relFileName, alphaSource, premultiplyAlpha, currentMappingType, UVSet, 
 			wrapModeU, wrapModeV, translation, scaling, useMaterial, useMipMap);}
-	DLLEXPORT void Foo_SetTextureMatProp(Foo* foo, char* name, char* matName, char* matProp) { foo->SetTextureMatProp(name, matName, matProp); }
+	DLLEXPORT void Exporter_SetTextureMatProp(Exporter* exporter, char* name, char* matName, char* matProp) { exporter->SetTextureMatProp(name, matName, matProp); }
 
-	DLLEXPORT void Foo_AddPoseNode(Foo* foo, char* name, Foo::Mat4x4 mat) { foo->AddPoseNode(name, mat); }
-	DLLEXPORT void Foo_AddBoneChild(Foo* foo, char* cName, char* pName) { foo->AddBoneChild(cName, pName); }
-	DLLEXPORT void Foo_AddBone(Foo* foo, char* name, Foo::Vector3 lclTranslation, Foo::Vector3 lclRotation, Foo::Vector3 lclScaling)
-		{ foo->AddBone(name, lclTranslation, lclRotation, lclScaling); }
-	DLLEXPORT void Foo_AddSubDeformerIndex(Foo* foo, char* mName, char* bName, int index) { foo->AddSubDeformerIndex(mName, bName, index); }
-	DLLEXPORT void Foo_AddSubDeformerWeight(Foo* foo, char* mName, char* bName, float weight) { foo->AddSubDeformerWeight(mName, bName, weight); }
-	DLLEXPORT void Foo_SetSubDeformerTransform(Foo* foo, char* mName, char* bName, Foo::Mat4x4 transf, Foo::Vector4 quat) { foo->SetSubDeformerTransform(mName, bName, transf, quat); }
-	DLLEXPORT void Foo_SetSubDeformerTransformLink(Foo* foo, char* mName, char* bName, Foo::Mat4x4 transfLink) { foo->SetSubDeformerTransformLink(mName, bName, transfLink); }
+	DLLEXPORT void Exporter_AddPoseNode(Exporter* exporter, char* name, Exporter::Mat4x4 mat) { exporter->AddPoseNode(name, mat); }
+	DLLEXPORT void Exporter_AddBoneChild(Exporter* exporter, char* cName, char* pName) { exporter->AddBoneChild(cName, pName); }
+	DLLEXPORT void Exporter_AddBone(Exporter* exporter, char* name, Exporter::Vector3 lclTranslation, Exporter::Vector3 lclRotation, Exporter::Vector3 lclScaling)
+		{ exporter->AddBone(name, lclTranslation, lclRotation, lclScaling); }
+	DLLEXPORT void Exporter_AddSubDeformerIndex(Exporter* exporter, char* mName, char* bName, int index) { exporter->AddSubDeformerIndex(mName, bName, index); }
+	DLLEXPORT void Exporter_AddSubDeformerWeight(Exporter* exporter, char* mName, char* bName, float weight) { exporter->AddSubDeformerWeight(mName, bName, weight); }
+	DLLEXPORT void Exporter_SetSubDeformerTransform(Exporter* exporter, char* mName, char* bName, Exporter::Mat4x4 transf, Exporter::Vector4 quat) { exporter->SetSubDeformerTransform(mName, bName, transf, quat); }
+	DLLEXPORT void Exporter_SetSubDeformerTransformLink(Exporter* exporter, char* mName, char* bName, Exporter::Mat4x4 transfLink) { exporter->SetSubDeformerTransformLink(mName, bName, transfLink); }
 
-	DLLEXPORT void Foo_SetFPS(Foo* foo, float fps) { foo->SetFPS(fps); }
-	DLLEXPORT void Foo_SetTimeSpan(Foo* foo, char* tName, float lStart, float lEnd, float rStart, float rEnd) { foo->SetTimeSpan(tName, lStart, lEnd, rStart, rEnd); }
-	DLLEXPORT void Foo_SetChannelDefaultValue(Foo* foo, char* takeName, char* modelName, int type, double value) { foo->SetChannelDefaultValue(takeName, modelName, type, value); }
-	DLLEXPORT void Foo_AddChannelKey(Foo* foo, char* takeName, char* modelName, int type, float frame, float value) { foo->AddChannelKey(takeName, modelName, type, frame, value); }
+	DLLEXPORT void Exporter_SetFPS(Exporter* exporter, float fps) { exporter->SetFPS(fps); }
+	DLLEXPORT void Exporter_SetTimeSpan(Exporter* exporter, char* tName, float lStart, float lEnd, float rStart, float rEnd) { exporter->SetTimeSpan(tName, lStart, lEnd, rStart, rEnd); }
+	DLLEXPORT void Exporter_SetChannelDefaultValue(Exporter* exporter, char* takeName, char* modelName, int type, double value) { exporter->SetChannelDefaultValue(takeName, modelName, type, value); }
+	DLLEXPORT void Exporter_AddChannelKey(Exporter* exporter, char* takeName, char* modelName, int type, float frame, float value) { exporter->AddChannelKey(takeName, modelName, type, frame, value); }
 
-	DLLEXPORT bool Foo_Export(Foo* foo, char* name) { return foo->Export(name); }
-	DLLEXPORT void Foo_PrintMesh(Foo* foo) { foo->PrintMesh(); }
-	DLLEXPORT void Foo_PrintSkeleton(Foo* foo) { foo->PrintSkeleton(); }
-	DLLEXPORT void Foo_PrintTakes(Foo* foo) { foo->PrintTakes(); }
+	DLLEXPORT bool Exporter_Export(Exporter* exporter, char* name) { return exporter->Export(name); }
+	DLLEXPORT void Exporter_PrintMesh(Exporter* exporter) { exporter->PrintMesh(); }
+	DLLEXPORT void Exporter_PrintSkeleton(Exporter* exporter) { exporter->PrintSkeleton(); }
+	DLLEXPORT void Exporter_PrintTakes(Exporter* exporter) { exporter->PrintTakes(); }
 
-	DLLEXPORT void Foo_SetAsASCII(Foo* foo, bool asAscii) { foo->SetAsASCII(asAscii); }
+	DLLEXPORT void Exporter_SetAsASCII(Exporter* exporter, bool asAscii) { exporter->SetAsASCII(asAscii); }
 }

@@ -267,8 +267,6 @@ def save_single(operator, scene, filepath="",
     
     if global_matrix is None:
         global_matrix = Matrix()
-        unit_scale = 1.0
-        global_matrix = Matrix.Scale(unit_scale * global_scale, 4) * global_matrix
         global_scale = 1.0
     else:
         global_scale = global_matrix.median_scale
