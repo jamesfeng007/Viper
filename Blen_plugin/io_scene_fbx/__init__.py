@@ -683,36 +683,56 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
             description="Which kind of object to export",
             default={'EMPTY', 'ARMATURE', 'MESH', 'OTHER'},
             )
-    # Anim - 6.1
-    use_anim = BoolProperty(
-            name="Animation",
-            description="Export keyframe animation",
+    # Anim - 7.4
+    bake_anim = BoolProperty(
+            name="Baked Animation",
+            description="Export baked keyframe animation",
             default=True,
             )
-    use_anim_action_all = BoolProperty(
+    bake_anim_use_all_bones = BoolProperty(
+            name="Key All Bones",
+            description="Force exporting at least one key of animation for all bones "
+                        "(needed with some target applications, like UE4)",
+            default=True,
+            )    
+    bake_anim_simplify_factor = FloatProperty(
+            name="Simplify",
+            description="How much to simplify baked values (0.0 to disable, the higher the more simplified)",
+            min=0.0, max=100.0,  # No simplification to up to 10% of current magnitude tolerance.
+            soft_min=0.0, soft_max=10.0,
+            default=1.0,  # default: min slope: 0.005, max frame step: 10.
+            )    
+    bake_anim_use_nla_strips = BoolProperty(
+            name="NLA Strips",
+            description="Export each non-muted NLA strip as a separated FBX's AnimStack, if any, "
+                        "instead of global scene animation",
+            default=True,
+            )
+    bake_anim_use_all_actions = BoolProperty(
             name="All Actions",
-            description=("Export all actions for armatures or just the currently selected action"),
+            description="Export each action as a separated FBX's AnimStack, instead of global scene animation "
+                        "(note that animated objects will get all actions compatible with them, "
+                        "others will get no animation at all)",
             default=True,
             )
-    use_default_take = BoolProperty(
-            name="Default Take",
-            description="Export currently assigned object and armature animations into a default take from the scene "
-                        "start/end frames",
-            default=True
-            )
-    use_anim_optimize = BoolProperty(
-            name="Optimize Keyframes",
-            description="Remove double keyframes",
+    bake_anim_force_startend_keying = BoolProperty(
+            name="Force Start/End Keying",
+            description="Always add a keyframe at start and end of actions for animated channels",
             default=True,
+            )    
+    bake_anim_step = FloatProperty(
+            name="Sampling Rate",
+            description="How often to evaluate animated values (in frames)",
+            min=0.01, max=100.0,
+            soft_min=0.1, soft_max=10.0,
+            default=1.0,
             )
-    anim_optimize_precision = FloatProperty(
-            name="Precision",
-            description="Tolerance for comparing double keyframes (higher for greater accuracy)",
-            min=0.0, max=20.0,  # from 10^2 to 10^-18 frames precision.
-            soft_min=1.0, soft_max=16.0,
-            default=6.0,  # default: 10^-4 frames.
-            )
-    # End anim
+    use_armature_deform_only = BoolProperty(
+            name="Only Deform Bones",
+            description="Only write deforming bones (and non-deforming ones when they have deforming children)",
+            default=False,
+            )    
+    
     path_mode = path_reference_mode    
     embed_textures = BoolProperty(
             name="Embed Textures",
@@ -725,6 +745,33 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
                         "target space is not aligned with Blender's space "
                         "(WARNING! experimental option, use at own risks, known broken with armatures/animations)",
             default=False,
+            )
+    automatic_bone_orientation = BoolProperty(
+            name="Automatic Bone Orientation",
+            description="Try to align the major bone axis with the bone children",
+            default=False,
+            )    
+    primary_bone_axis = EnumProperty(
+            name="Primary Bone Axis",
+            items=(('X', "X Axis", ""),
+                   ('Y', "Y Axis", ""),
+                   ('Z', "Z Axis", ""),
+                   ('-X', "-X Axis", ""),
+                   ('-Y', "-Y Axis", ""),
+                   ('-Z', "-Z Axis", ""),
+                   ),
+            default='Y',
+            )
+    secondary_bone_axis = EnumProperty(
+            name="Secondary Bone Axis",
+            items=(('X', "X Axis", ""),
+                   ('Y', "Y Axis", ""),
+                   ('Z', "Z Axis", ""),
+                   ('-X', "-X Axis", ""),
+                   ('-Y', "-Y Axis", ""),
+                   ('-Z', "-Z Axis", ""),
+                   ),
+            default='X',
             )    
     
     def draw(self, context):
@@ -741,20 +788,29 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
         layout.prop(self, "axis_forward")
         layout.prop(self, "axis_up")
         
-        layout.prop(self, "use_anim")
+        layout.prop(self, "bake_anim")
         col = layout.column()
-        col.enabled = self.use_anim
-        col.prop(self, "use_anim_action_all")
-        col.prop(self, "use_default_take")
-        col.prop(self, "use_anim_optimize")
-        col.prop(self, "anim_optimize_precision")
+        col.enabled = self.bake_anim
+        col.prop(self, "bake_anim_use_all_bones")
+        col.prop(self, "bake_anim_use_nla_strips")
+        col.prop(self, "bake_anim_use_all_actions")
+        col.prop(self, "bake_anim_force_startend_keying")
+        col.prop(self, "bake_anim_step")
+        col.prop(self, "bake_anim_simplify_factor")
         
+        layout.prop(self, "use_armature_deform_only")
         row = layout.row(align=True)
         row.prop(self, "path_mode")        
         sub = row.row(align=True)
         sub.enabled = (self.path_mode == 'COPY')
         sub.prop(self, "embed_textures", text="", icon='PACKAGE' if self.embed_textures else 'UGLYPACKAGE')
         layout.prop(self, "bake_space_transform")
+        
+        layout.prop(self, "automatic_bone_orientation"),
+        sub = layout.column()
+        sub.enabled = not self.automatic_bone_orientation
+        sub.prop(self, "primary_bone_axis")
+        sub.prop(self, "secondary_bone_axis")        
         
         
     def execute(self, context):

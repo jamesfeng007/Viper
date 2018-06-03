@@ -11,32 +11,38 @@ import bpy_extras
 from mathutils import Vector, Matrix
 from . import data_types
 from .fbx_utils import ( ObjectWrapper, FBXExportSettingsMedia, get_blenderID_key, BLENDER_OBJECT_TYPES_MESHLIKE, 
-                         BLENDER_OTHER_OBJECT_TYPES, nors_transformed_gen, )
+                         BLENDER_OTHER_OBJECT_TYPES, nors_transformed_gen, AnimationCurveNodeWrapper, units_convertor_iter,
+                         get_blender_anim_stack_key, get_blender_anim_layer_key, get_blenderID_name, fbx_name_class,)
 from print_util import PrintHelper
 
 from fbx_export import FBXExport, Vector3, Mat4x4, Vector4, ChannelType
 
+convert_rad_to_deg_iter = units_convertor_iter("radian", "degree")
+
+from .export_fbx import g_ph
+global g_ph
+
 def to_channel_type(tx_chan, index):
     if tx_chan == 'T':
-        if index == 0:
+        if index == "d|X":
             return 0
-        elif index == 1:
+        elif index == "d|Y":
             return 1
-        elif index == 2:
+        elif index == "d|Z":
             return 2
     elif tx_chan == 'R':
-        if index == 0:
+        if index == "d|X":
             return 3
-        elif index == 1:
+        elif index == "d|Y":
             return 4
-        elif index == 2:
+        elif index == "d|Z":
             return 5
     elif tx_chan == 'S':
-        if index == 0:
+        if index == "d|X":
             return 6
-        elif index == 1:
+        elif index == "d|Y":
             return 7
-        elif index == 2:
+        elif index == "d|Z":
             return 8        
 
 def grouper_exact(it, chunk_size):
@@ -123,10 +129,11 @@ def sane_name(data, dct, unique_set=None):
     else:
         other = None
         use_other = False
-
+        
     name = data.name if data else None
     orig_name = name
 
+    print("sane_name00 name: %s" % name)
     if other:
         orig_name_other = other.name
         name = '%s #%s' % (name, orig_name_other)
@@ -137,17 +144,20 @@ def sane_name(data, dct, unique_set=None):
     # so as to avoid namespace collision between types - like with objects <-> bones
     #try:        return dct[name]
     #except:        pass
-
+    print("sane_name0 name: %s" % name)
     if not name:
         name = 'unnamed'  # blank string, ASKING FOR TROUBLE!
     else:
-
         name = bpy.path.clean_name(name)  # use our own
+        
+    print("sane_name name: %s" % name)
 
     name_unique = dct.values() if unique_set is None else unique_set
 
     while name in name_unique:
         name = increment_string(name)
+        
+    print("sane_name2 name: %s" % name)
 
     if use_other:  # even if other is None - orig_name_other will be a string or None
         dct[orig_name, orig_name_other] = name
@@ -223,18 +233,15 @@ def meshNormalizedWeights(ob, me):
     return groupNames, vWeightList
 
 FBXExportData = namedtuple("FBXExportData", (
-    "settings",
+    "settings", "scene", "objects", "animations", "animated", "frame_start", "frame_end",
 ))
 
 FBXExportSettings = namedtuple("FBXExportSettings", (
-    "bake_space_transform",
+    "global_matrix", 
+    "bake_space_transform", "bake_anim", "bake_anim_use_all_bones", "bake_anim_use_nla_strips", "bake_anim_use_all_actions",
+    "bake_anim_step", "bake_anim_simplify_factor", "bake_anim_force_startend_keying", "use_armature_deform_only", "bone_correction_matrix",
+    "bone_correction_matrix_inv", 
 ))
-
-def fbx_data_from_scene(scene, settings):
-    
-    return FBXExportData(
-        settings,
-    )    
 
 def save_single(operator, scene, filepath="",
         global_matrix=None,
@@ -244,10 +251,13 @@ def save_single(operator, scene, filepath="",
         mesh_smooth_type='FACE',
         use_armature_deform_only=False,
         version='BIN',
-        use_anim=True,
-        use_anim_optimize=True,
-        anim_optimize_precision=6,
-        use_anim_action_all=False,
+        bake_anim=True,
+        bake_anim_use_all_bones=True,
+        bake_anim_use_nla_strips=True,
+        bake_anim_use_all_actions=True,
+        bake_anim_step=1.0,
+        bake_anim_simplify_factor=1.0,
+        bake_anim_force_startend_keying=True,
         use_metadata=True,
         path_mode='AUTO',
         use_mesh_edges=True,
@@ -256,6 +266,8 @@ def save_single(operator, scene, filepath="",
         use_mesh_modifiers_render=True,
         bake_space_transform=False,
         use_tspace=True,
+        primary_bone_axis='Y',
+        secondary_bone_axis='X',
         **kwargs
     ):
     
@@ -265,15 +277,32 @@ def save_single(operator, scene, filepath="",
     # Used for mesh and armature rotations
     mtx4_z90 = Matrix.Rotation(math.pi / 2.0, 4, 'Z')
     
+    # Default Blender unit is equivalent to meter, while FBX one is centimeter...
+    unit_scale = 1.0
+    
     if global_matrix is None:
         global_matrix = Matrix()
         global_scale = 1.0
     else:
         global_scale = global_matrix.median_scale
         
+    global_matrix = Matrix.Scale(unit_scale * global_scale, 4) * global_matrix        
+        
     global_matrix_inv = global_matrix.inverted()
     # For transforming mesh normals.
-    global_matrix_inv_transposed = global_matrix_inv.transposed()        
+    global_matrix_inv_transposed = global_matrix_inv.transposed()
+    
+    # Calcuate bone correction matrix
+    bone_correction_matrix = None  # Default is None = no change
+    bone_correction_matrix_inv = None
+    if (primary_bone_axis, secondary_bone_axis) != ('Y', 'X'):
+        from bpy_extras.io_utils import axis_conversion
+        bone_correction_matrix = axis_conversion(from_forward=secondary_bone_axis,
+                                                 from_up=primary_bone_axis,
+                                                 to_forward='X',
+                                                 to_up='Y',
+                                                 ).to_4x4()
+        bone_correction_matrix_inv = bone_correction_matrix.inverted()    
     
     fbxSDKExport = FBXExport(5)
     
@@ -294,10 +323,12 @@ def save_single(operator, scene, filepath="",
     )
     
     settings = FBXExportSettings(
-        bake_space_transform,
+        global_matrix,
+        bake_space_transform, bake_anim, bake_anim_use_all_bones, bake_anim_use_nla_strips, bake_anim_use_all_actions,
+        bake_anim_step, bake_anim_simplify_factor, bake_anim_force_startend_keying, use_armature_deform_only, bone_correction_matrix,
+        bone_correction_matrix_inv,
     )
     
-    scene_data = fbx_data_from_scene(scene, settings)
     
     if scene.world:
         data_world = OrderedDict(((scene.world, get_blenderID_key(scene.world)),))
@@ -535,6 +566,8 @@ def save_single(operator, scene, filepath="",
         fbx_rot = Vector3(rot[0], rot[1], rot[2])
         fbx_scale = Vector3(scale[0], scale[1], scale[2])
         fbxSDKExport.add_bone(c_char_p(my_bone.fbxName.encode('utf-8')), byref(fbx_loc), byref(fbx_rot), byref(fbx_scale))
+        print("my_bone.blenName: %s" % my_bone.blenName)
+        print("my_bone.fbxName: %s" % my_bone.fbxName)
         
         global_matrix_bone = (my_bone.fbxArm.matrixWorld * my_bone.restMatrix) * mtx4_z90
         pose_items.append((my_bone.fbxName, global_matrix_bone))        
@@ -1242,7 +1275,317 @@ def save_single(operator, scene, filepath="",
             if getattr(tex, "use_map_" + use_map_name):
                 tex_fbx_props.add(fbx_prop_name)
     
-        return tex_fbx_props        
+        return tex_fbx_props
+    
+    def fbx_skeleton_from_armature(scene, settings, arm_obj, objects):
+        bones = OrderedDict()
+        for bo in arm_obj.bones:
+            if settings.use_armature_deform_only:
+                if bo.bdata.use_deform:
+                    bones[bo] = True
+                    bo_par = bo.parent
+                    while bo_par.is_bone:
+                        bones[bo_par] = True
+                        bo_par = bo_par.parent
+                elif bo not in bones:  # Do not override if already set in the loop above!
+                    bones[bo] = False
+            else:
+                bones[bo] = True
+    
+        bones = OrderedDict((bo, None) for bo, use in bones.items() if use)
+    
+        if not bones:
+            return
+    
+        objects.update(bones)
+    
+    def fbx_animations_do(scene_data, ref_id, f_start, f_end, start_zero, objects=None, force_keep=False):
+        """
+        Generate animation data (a single AnimStack) from objects, for a given frame range.
+        """
+        bake_step = scene_data.settings.bake_anim_step
+        simplify_fac = scene_data.settings.bake_anim_simplify_factor
+        scene = scene_data.scene
+        force_keying = scene_data.settings.bake_anim_use_all_bones
+        force_sek = scene_data.settings.bake_anim_force_startend_keying
+    
+        if objects is not None:
+            # Add bones and duplis!
+            for ob_obj in tuple(objects):
+                if not ob_obj.is_object:
+                    continue
+                if ob_obj.type == 'ARMATURE':
+                    objects |= {bo_obj for bo_obj in ob_obj.bones if bo_obj in scene_data.objects}
+                ob_obj.dupli_list_create(scene, 'RENDER')
+                for dp_obj in ob_obj.dupli_list:
+                    if dp_obj in scene_data.objects:
+                        objects.add(dp_obj)
+                ob_obj.dupli_list_clear()
+        else:
+            objects = scene_data.objects
+    
+        back_currframe = scene.frame_current
+        animdata_ob = OrderedDict()
+        p_rots = {}
+    
+        for ob_obj in objects:
+            if ob_obj.parented_to_armature:
+                continue
+            ACNW = AnimationCurveNodeWrapper
+            loc, rot, scale, _m, _mr = ob_obj.fbx_object_tx(scene_data)
+            rot_deg = tuple(convert_rad_to_deg_iter(rot))
+            force_key = (simplify_fac == 0.0) or (ob_obj.is_bone and force_keying)
+            animdata_ob[ob_obj] = (ACNW(ob_obj.key, 'LCL_TRANSLATION', force_key, force_sek, loc),
+                                   ACNW(ob_obj.key, 'LCL_ROTATION', force_key, force_sek, rot_deg),
+                                   ACNW(ob_obj.key, 'LCL_SCALING', force_key, force_sek, scale))
+            p_rots[ob_obj] = rot
+    
+        force_key = (simplify_fac == 0.0)
+    
+        currframe = f_start
+        while currframe <= f_end:
+            real_currframe = currframe - f_start if start_zero else currframe
+            scene.frame_set(int(currframe), currframe - int(currframe))
+    
+            for ob_obj in animdata_ob:
+                ob_obj.dupli_list_create(scene, 'RENDER')
+            for ob_obj, (anim_loc, anim_rot, anim_scale) in animdata_ob.items():
+                # We compute baked loc/rot/scale for all objects (rot being euler-compat with previous value!).
+                p_rot = p_rots.get(ob_obj, None)
+                loc, rot, scale, _m, _mr = ob_obj.fbx_object_tx(scene_data, rot_euler_compat=p_rot)
+                p_rots[ob_obj] = rot
+                anim_loc.add_keyframe(real_currframe, loc)
+                anim_rot.add_keyframe(real_currframe, tuple(convert_rad_to_deg_iter(rot)))
+                anim_scale.add_keyframe(real_currframe, scale)
+            for ob_obj in objects:
+                ob_obj.dupli_list_clear()
+            currframe += bake_step
+    
+        scene.frame_set(back_currframe, 0.0)
+    
+        animations = OrderedDict()
+    
+        # And now, produce final data (usable by FBX export code)
+        # Objects-like loc/rot/scale...
+        for ob_obj, anims in animdata_ob.items():
+            for anim in anims:
+                anim.simplify(simplify_fac, bake_step, force_keep)
+                if not anim:
+                    continue
+                for obj_key, group_key, group, fbx_group, fbx_gname in anim.get_final_data(scene, ref_id, force_keep):
+                    anim_data = animations.get(obj_key)
+                    if anim_data is None:
+                        anim_data = animations[obj_key] = (ob_obj.name, OrderedDict()) #use dummy_unused_key to pass bone name
+                    anim_data[1][fbx_group] = (group_key, group, fbx_gname)
+    
+        astack_key = get_blender_anim_stack_key(scene, ref_id)
+        alayer_key = get_blender_anim_layer_key(scene, ref_id)
+        name = (get_blenderID_name(ref_id) if ref_id else scene.name).encode()
+    
+        if start_zero:
+            f_end -= f_start
+            f_start = 0.0
+    
+        return (astack_key, animations, alayer_key, name, f_start, f_end) if animations else None
+    
+    def fbx_animations(scene_data):
+        """
+        Generate global animation data from objects.
+        """
+        scene = scene_data.scene
+        animations = []
+        animated = set()
+        frame_start = 1e100
+        frame_end = -1e100
+        
+        def add_anim(animations, animated, anim):
+            nonlocal frame_start, frame_end
+            if anim is not None:
+                animations.append(anim)
+                f_start, f_end = anim[4:6]
+                if f_start < frame_start:
+                    frame_start = f_start
+                if f_end > frame_end:
+                    frame_end = f_end
+    
+                _astack_key, astack, _alayer_key, _name, _fstart, _fend = anim
+                for elem_key, (alayer_key, acurvenodes) in astack.items():
+                    for fbx_prop, (acurvenode_key, acurves, acurvenode_name) in acurvenodes.items():
+                        animated.add((elem_key, fbx_prop))
+                        
+        # Per-NLA strip animstacks.
+        if scene_data.settings.bake_anim_use_nla_strips:
+            strips = []
+            ob_actions = []
+            for ob_obj in scene_data.objects:
+                # NLA tracks only for objects, not bones!
+                if not ob_obj.is_object:
+                    continue
+                ob = ob_obj.bdata  # Back to real Blender Object.
+                if not ob.animation_data:
+                    continue
+                # We have to remove active action from objects, it overwrites strips actions otherwise...
+                ob_actions.append((ob, ob.animation_data.action))
+                ob.animation_data.action = None
+                for track in ob.animation_data.nla_tracks:
+                    if track.mute:
+                        continue
+                    for strip in track.strips:
+                        if strip.mute:
+                            continue
+                        strips.append(strip)
+                        strip.mute = True
+    
+            for strip in strips:
+                strip.mute = False
+                add_anim(animations, animated,
+                         fbx_animations_do(scene_data, strip, strip.frame_start, strip.frame_end, True, force_keep=True))
+                strip.mute = True
+                scene.frame_set(scene.frame_current, 0.0)
+    
+            for strip in strips:
+                strip.mute = False
+    
+            for ob, ob_act in ob_actions:
+                ob.animation_data.action = ob_act
+                
+        # All actions.
+        if scene_data.settings.bake_anim_use_all_actions:
+            def validate_actions(act, path_resolve):
+                for fc in act.fcurves:
+                    data_path = fc.data_path
+                    if fc.array_index:
+                        data_path = data_path + "[%d]" % fc.array_index
+                    try:
+                        path_resolve(data_path)
+                    except ValueError:
+                        return False  # Invalid.
+                return True  # Valid.
+    
+            def restore_object(ob_to, ob_from):
+                # Restore org state of object (ugh :/ ).
+                props = (
+                    'location', 'rotation_quaternion', 'rotation_axis_angle', 'rotation_euler', 'rotation_mode', 'scale',
+                    'delta_location', 'delta_rotation_euler', 'delta_rotation_quaternion', 'delta_scale',
+                    'lock_location', 'lock_rotation', 'lock_rotation_w', 'lock_rotations_4d', 'lock_scale',
+                    'tag', 'layers', 'select', 'track_axis', 'up_axis', 'active_material', 'active_material_index',
+                    'matrix_parent_inverse', 'empty_draw_type', 'empty_draw_size', 'empty_image_offset', 'pass_index',
+                    'color', 'hide', 'hide_select', 'hide_render', 'use_slow_parent', 'slow_parent_offset',
+                    'use_extra_recalc_object', 'use_extra_recalc_data', 'dupli_type', 'use_dupli_frames_speed',
+                    'use_dupli_vertices_rotation', 'use_dupli_faces_scale', 'dupli_faces_scale', 'dupli_group',
+                    'dupli_frames_start', 'dupli_frames_end', 'dupli_frames_on', 'dupli_frames_off',
+                    'draw_type', 'show_bounds', 'draw_bounds_type', 'show_name', 'show_axis', 'show_texture_space',
+                    'show_wire', 'show_all_edges', 'show_transparent', 'show_x_ray',
+                    'show_only_shape_key', 'use_shape_key_edit_mode', 'active_shape_key_index',
+                )
+                for p in props:
+                    if not ob_to.is_property_readonly(p):
+                        setattr(ob_to, p, getattr(ob_from, p))
+    
+            for ob_obj in scene_data.objects:
+                # Actions only for objects, not bones!
+                if not ob_obj.is_object:
+                    continue
+    
+                ob = ob_obj.bdata  # Back to real Blender Object.
+    
+                if not ob.animation_data:
+                    continue  # Do not export animations for objects that are absolutely not animated, see T44386.
+    
+                if ob.animation_data.is_property_readonly('action'):
+                    continue  # Cannot re-assign 'active action' to this object (usually related to NLA usage, see T48089).
+    
+                # We can't play with animdata and actions and get back to org state easily.
+                # So we have to add a temp copy of the object to the scene, animate it, and remove it... :/
+                ob_copy = ob.copy()
+                # Great, have to handle bones as well if needed...
+                pbones_matrices = [pbo.matrix_basis.copy() for pbo in ob.pose.bones] if ob.type == 'ARMATURE' else ...
+    
+                org_act = ob.animation_data.action
+                path_resolve = ob.path_resolve
+    
+                for act in bpy.data.actions:
+                    # For now, *all* paths in the action must be valid for the object, to validate the action.
+                    # Unless that action was already assigned to the object!
+                    if act != org_act and not validate_actions(act, path_resolve):
+                        continue
+                    ob.animation_data.action = act
+                    frame_start, frame_end = act.frame_range  # sic!
+                    add_anim(animations, animated,
+                             fbx_animations_do(scene_data, (ob, act), frame_start, frame_end, True,
+                                               objects={ob_obj}, force_keep=True))
+                    # Ugly! :/
+                    if pbones_matrices is not ...:
+                        for pbo, mat in zip(ob.pose.bones, pbones_matrices):
+                            pbo.matrix_basis = mat.copy()
+                    ob.animation_data.action = org_act
+                    restore_object(ob, ob_copy)
+                    scene.frame_set(scene.frame_current, 0.0)
+    
+                if pbones_matrices is not ...:
+                    for pbo, mat in zip(ob.pose.bones, pbones_matrices):
+                        pbo.matrix_basis = mat.copy()
+                ob.animation_data.action = org_act
+    
+                bpy.data.objects.remove(ob_copy)
+                scene.frame_set(scene.frame_current, 0.0)
+    
+        # Global (containing everything) animstack, only if not exporting NLA strips and/or all actions.
+        if not scene_data.settings.bake_anim_use_nla_strips and not scene_data.settings.bake_anim_use_all_actions:
+            add_anim(animations, animated, fbx_animations_do(scene_data, None, scene.frame_start, scene.frame_end, False))
+    
+        # Be sure to update all matrices back to org state!
+        scene.frame_set(scene.frame_current, 0.0)
+    
+        return animations, animated, frame_start, frame_end
+    
+    def fbx_data_from_scene(scene, settings, objects):
+        # Animation...
+        animations = ()
+        animated = set()
+        frame_start = scene.frame_start
+        frame_end = scene.frame_end
+        if settings.bake_anim:
+            # From objects & bones only for a start.
+            # Kind of hack, we need a temp scene_data for object's space handling to bake animations...
+            tmp_scdata = FBXExportData(
+                settings, scene, objects, None, None, 0.0, 0.0,
+            )
+            animations, animated, frame_start, frame_end = fbx_animations(tmp_scdata)
+                
+        return FBXExportData(
+            settings, scene, objects, animations, animated, frame_start, frame_end,
+        )
+    
+    def fbx_data_animation_elements(root, scene_data):
+        animations = scene_data.animations
+        if not animations:
+            return        
+        scene = scene_data.scene
+    
+        fps = scene.render.fps / scene.render.fps_base
+        fbxSDKExport.set_fps(fps)
+        
+        for astack_key, alayers, alayer_key, name, f_start, f_end in animations:
+            fbxSDKExport.set_time_span(name, f_start, f_end, f_start, f_end)
+            
+            for ob_obj, (alayer_key, acurvenodes) in alayers.items():
+                print("fbx_data_animation_elements alayer_key: %s" % alayer_key)
+                bone_name = bpy.path.clean_name(alayer_key)
+                for fbx_prop, (acurvenode_key, acurves, acurvenode_name) in acurvenodes.items():
+                    for fbx_item, (acurve_key, def_value, keys, _acurve_valid) in acurves.items():
+                        print("fbx_item: %s" % fbx_item)
+                        print("acurvenode_name: %s" % acurvenode_name)
+                        fbxSDKExport.set_channel_default_value(name, c_char_p(bone_name.encode('utf-8')), to_channel_type(acurvenode_name, fbx_item), def_value)
+                        if keys:
+                            g_ph.printLog("acurve_key: %s\n" % acurve_key)
+                            g_ph.printLog("def_value: %f\n" % def_value)
+                            for f, v in keys:
+                                g_ph.printLog("frame:%f, value: %f\n" % (f, v))
+                                fbxSDKExport.add_channel_key(name, c_char_p(bone_name.encode('utf-8')), 
+                                                             to_channel_type(acurvenode_name, fbx_item), f, v)
+                    
+                    
     
     objects = OrderedDict()  # Because we do not have any ordered set...
     objtypes = object_types
@@ -1297,7 +1640,16 @@ def save_single(operator, scene, filepath="",
 
         # In case "real" source object of that dupli did not yet still existed in data_meshes, create it now!
         if org_ob_obj is not None:
-            data_meshes[org_ob_obj] = data_meshes[ob_obj]        
+            data_meshes[org_ob_obj] = data_meshes[ob_obj]
+            
+    # Armatures!
+    data_deformers_skin = OrderedDict()
+    data_bones = OrderedDict()
+    arm_parents = set()
+    for ob_obj in tuple(objects):
+        if not (ob_obj.is_object and ob_obj.type in {'ARMATURE'}):
+            continue
+        fbx_skeleton_from_armature(scene, settings, ob_obj, objects)
         
     data_materials = OrderedDict()
     for ob_obj in objects:
@@ -1370,8 +1722,9 @@ def save_single(operator, scene, filepath="",
             idx = _objs_indices[ob_obj] = _objs_indices.get(ob_obj, -1) + 1
             mesh_mat_indices.setdefault(me, OrderedDict())[mat] = idx
     del _objs_indices
-
-
+    
+    scene_data = fbx_data_from_scene(scene, settings, objects)
+    
     for me_obj in data_meshes:
         fbx_data_mesh_elements(objects, me_obj, mesh_mat_indices, data_meshes)                
                 
@@ -1390,6 +1743,7 @@ def save_single(operator, scene, filepath="",
                 #connections.append((b"OP", get_fbx_uuid_from_key(tex_key), get_fbx_uuid_from_key(mat_key), fbx_prop))
                 fbxSDKExport.set_texture_mat_prop(c_char_p(tex.name.encode('utf-8')), c_char_p(mat.name.encode('utf-8')), c_char_p(fbx_prop))
 
+    fbx_data_animation_elements(objects, scene_data)
                 
     del context_objects, objects
 
@@ -1454,238 +1808,6 @@ def save_single(operator, scene, filepath="",
             # the armature object is written as an empty and all root level bones connect to it
             fbxSDKExport.add_bone_child(c_char_p(my_bone.fbxName.encode('utf-8')), c_char_p(my_bone.fbxArm.fbxName.encode('utf-8')))
             
-    # Needed for scene footer as well as animation
-    render = scene.render
-    
-    fps = float(render.fps)
-    start = scene.frame_start
-    end = scene.frame_end
-    if end < start:
-        start, end = end, start
-        
-    fbxSDKExport.set_fps(fps)
-    # animations for these object types
-    ob_anim_lists = ob_bones, ob_meshes, ob_arms
-
-    if use_anim and [tmp for tmp in ob_anim_lists if tmp]:
-
-        frame_orig = scene.frame_current
-
-        if use_anim_optimize:
-            # Do we really want to keep such behavior? User could enter real value directly...
-            ANIM_OPTIMIZE_PRECISSION_FLOAT = 10 ** (-anim_optimize_precision + 2)
-
-        # default action, when no actions are avaioable
-        tmp_actions = []
-        blenActionDefault = None
-        action_lastcompat = None
-
-        # instead of tagging
-        tagged_actions = []
-
-        # get the current action first so we can use it if we only export one action (JCB)
-        for my_arm in ob_arms:
-            blenActionDefault = my_arm.blenAction
-            if blenActionDefault:
-                break
-
-        if use_anim_action_all:
-            tmp_actions = bpy.data.actions[:]
-        elif not use_default_take:
-            if blenActionDefault:
-                # Export the current action (JCB)
-                tmp_actions.append(blenActionDefault)
-
-        if tmp_actions:
-            # find which actions are compatible with the armatures
-            tmp_act_count = 0
-            for my_arm in ob_arms:
-
-                arm_bone_names = set([my_bone.blenName for my_bone in my_arm.fbxBones])
-
-                for action in tmp_actions:
-
-                    if arm_bone_names.intersection(action_bone_names(my_arm.blenObject, action)):  # at least one channel matches.
-                        my_arm.blenActionList.append(action)
-                        tagged_actions.append(action.name)
-                        tmp_act_count += 1
-
-                        # in case there are no actions applied to armatures
-                        # for example, when a user deletes the current action.
-                        action_lastcompat = action
-
-            if tmp_act_count:
-                # unlikely to ever happen but if no actions applied to armatures, just use the last compatible armature.
-                if not blenActionDefault:
-                    blenActionDefault = action_lastcompat
-
-        del action_lastcompat
-
-        if use_default_take:
-            tmp_actions.insert(0, None)  # None is the default action
-               
-        for blenAction in tmp_actions:
-            # we have tagged all actious that are used be selected armatures
-            if blenAction:
-                if blenAction.name in tagged_actions:
-                    print('\taction: "%s" exporting...' % blenAction.name)
-                else:
-                    print('\taction: "%s" has no armature using it, skipping' % blenAction.name)
-                    continue
-
-            if blenAction is None:
-                # Warning, this only accounts for tmp_actions being [None]
-                take_name = "Default Take"
-                act_start = start
-                act_end = end
-            else:
-                # use existing name
-                take_name = sane_name_mapping_take.get(blenAction.name)
-                if take_name is None:
-                    take_name = sane_takename(blenAction)
-
-                act_start, act_end = blenAction.frame_range
-                act_start = int(act_start)
-                act_end = int(act_end)
-
-                # Set the action active
-                for my_arm in ob_arms:
-                    if my_arm.blenObject.animation_data and blenAction in my_arm.blenActionList:
-                        my_arm.blenObject.animation_data.action = blenAction
-
-            # Use the action name as the take name and the take filename (JCB)
-            #fw('\n\tTake: "%s" {' % take_name)
-            # set pose data for all bones
-            # do this here in case the action changes
-            fbxSDKExport.set_time_span(c_char_p(take_name.encode('utf-8')), act_start - 1, act_end - 1, act_start - 1, act_end - 1)
-            '''
-            for my_bone in ob_bones:
-                my_bone.flushAnimData()
-            '''
-            i = act_start
-            while i <= act_end:
-                scene.frame_set(i)
-                for ob_generic in ob_anim_lists:
-                    for my_ob in ob_generic:
-                        #Blender.Window.RedrawAll()
-                        if ob_generic == ob_meshes and my_ob.fbxArm:
-                            # We cant animate armature meshes!
-                            my_ob.setPoseFrame(i, fake=True)
-                        else:
-                            my_ob.setPoseFrame(i)
-
-                i += 1
-
-            #for bonename, bone, obname, me, armob in ob_bones:
-            for ob_generic in (ob_bones, ob_meshes, ob_arms):
-
-                for my_ob in ob_generic:
-
-                    if ob_generic == ob_meshes and my_ob.fbxArm:
-                        # do nothing,
-                        pass
-                    else:
-
-                        #fw('\n\t\tModel: "Model::%s" {' % my_ob.fbxName)
-                        
-                        context_bone_anim_mats = [(my_ob.getAnimParRelMatrix(frame), my_ob.getAnimParRelMatrixRot(frame)) for frame in range(act_start, act_end + 1)]
-
-                        # ----------------
-                        # ----------------
-                        for TX_LAYER, TX_CHAN in enumerate('TRS'):  # transform, rotate, scale
-
-                            if TX_CHAN == 'T':
-                                context_bone_anim_vecs = [mtx[0].to_translation() for mtx in context_bone_anim_mats]
-                            elif    TX_CHAN == 'S':
-                                context_bone_anim_vecs = [mtx[0].to_scale() for mtx in context_bone_anim_mats]
-                            elif    TX_CHAN == 'R':
-                                # Was....
-                                # elif     TX_CHAN=='R':    context_bone_anim_vecs = [mtx[1].to_euler()            for mtx in context_bone_anim_mats]
-                                #
-                                # ...but we need to use the previous euler for compatible conversion.
-                                context_bone_anim_vecs = []
-                                prev_eul = None
-                                for mtx in context_bone_anim_mats:
-                                    if prev_eul:
-                                        prev_eul = mtx[1].to_euler('XYZ', prev_eul)
-                                    else:
-                                        prev_eul = mtx[1].to_euler()
-                                    context_bone_anim_vecs.append(tuple_rad_to_deg(prev_eul))
-
-                            #fw('\n\t\t\t\tChannel: "%s" {' % TX_CHAN)  # translation
-
-                            for i in range(3):
-                                # Loop on each axis of the bone
-                                #fw('\n\t\t\t\t\tChannel: "%s" {' % ('XYZ'[i]))  # translation
-                                #fw('\n\t\t\t\t\t\tDefault: %.15f' % context_bone_anim_vecs[0][i])
-                                fbxSDKExport.set_channel_default_value(c_char_p(take_name.encode('utf-8')), c_char_p(my_ob.fbxName.encode('utf-8')), to_channel_type(TX_CHAN, i), context_bone_anim_vecs[0][i])
-                                if not use_anim_optimize:
-                                    # Just write all frames, simple but in-eficient
-                                    frame = act_start
-                                    while frame <= act_end:
-                                        # Curve types are 'C,n' for constant, 'L' for linear
-                                        # C,n is for bezier? - linear is best for now so we can do simple keyframe removal
-                                        #fw('\n\t\t\t\t\t\t\t%i,%.15f,L' % (fbx_time(frame - 1), context_bone_anim_vecs[frame - act_start][i]))
-                                        fbxSDKExport.add_channel_key(c_char_p(take_name.encode('utf-8')), c_char_p(my_ob.fbxName.encode('utf-8')), 
-                                                                     to_channel_type(TX_CHAN, i), frame - 1, context_bone_anim_vecs[frame - act_start][i])
-                                        frame += 1
-                                else:
-                                    # remove unneeded keys, j is the frame, needed when some frames are removed.
-                                    context_bone_anim_keys = [(vec[i], j) for j, vec in enumerate(context_bone_anim_vecs)]
-
-                                    # last frame to fisrt frame, missing 1 frame on either side.
-                                    # removeing in a backwards loop is faster
-                                    #for j in xrange( (act_end-act_start)-1, 0, -1 ):
-                                    # j = (act_end-act_start)-1
-                                    j = len(context_bone_anim_keys) - 2
-                                    while j > 0 and len(context_bone_anim_keys) > 2:
-                                        # print j, len(context_bone_anim_keys)
-                                        # Is this key the same as the ones next to it?
-
-                                        # co-linear horizontal...
-                                        if        abs(context_bone_anim_keys[j][0] - context_bone_anim_keys[j - 1][0]) < ANIM_OPTIMIZE_PRECISSION_FLOAT and \
-                                                abs(context_bone_anim_keys[j][0] - context_bone_anim_keys[j + 1][0]) < ANIM_OPTIMIZE_PRECISSION_FLOAT:
-
-                                            del context_bone_anim_keys[j]
-
-                                        else:
-                                            frame_range = float(context_bone_anim_keys[j + 1][1] - context_bone_anim_keys[j - 1][1])
-                                            frame_range_fac1 = (context_bone_anim_keys[j + 1][1] - context_bone_anim_keys[j][1]) / frame_range
-                                            frame_range_fac2 = 1.0 - frame_range_fac1
-
-                                            if abs(((context_bone_anim_keys[j - 1][0] * frame_range_fac1 + context_bone_anim_keys[j + 1][0] * frame_range_fac2)) - context_bone_anim_keys[j][0]) < ANIM_OPTIMIZE_PRECISSION_FLOAT:
-                                                del context_bone_anim_keys[j]
-                                            else:
-                                                j -= 1
-
-                                        # keep the index below the list length
-                                        if j > len(context_bone_anim_keys) - 2:
-                                            j = len(context_bone_anim_keys) - 2
-
-                                    if len(context_bone_anim_keys) == 2 and context_bone_anim_keys[0][0] == context_bone_anim_keys[1][0]:
-
-                                        # This axis has no moton, its okay to skip KeyCount and Keys in this case
-                                        # pass
-
-                                        # better write one, otherwise we loose poses with no animation
-                                        #fw('\n\t\t\t\t\t\t\t%i,%.15f,L' % (fbx_time(start), context_bone_anim_keys[0][0]))
-                                        fbxSDKExport.add_channel_key(c_char_p(take_name.encode('utf-8')), c_char_p(my_ob.fbxName.encode('utf-8')), 
-                                                                     to_channel_type(TX_CHAN, i), start, context_bone_anim_keys[0][0])
-                                    else:
-                                        # We only need to write these if there is at least one
-                                        for val, frame in context_bone_anim_keys:
-                                            # frame is already one less then blenders frame
-                                            #fw('\n\t\t\t\t\t\t\t%i,%.15f,L' % (fbx_time(frame), val))
-                                            fbxSDKExport.add_channel_key(c_char_p(take_name.encode('utf-8')), c_char_p(my_ob.fbxName.encode('utf-8')), 
-                                                                     to_channel_type(TX_CHAN, i), frame, val)
-
-            # end action loop. set original actions
-            # do this after every loop in case actions effect eachother.
-            for my_arm in ob_arms:
-                if my_arm.blenObject.animation_data:
-                    my_arm.blenObject.animation_data.action = my_arm.blenAction
-                    
-        scene.frame_set(frame_orig)                    
     
     # write meshes animation
     #for obname, ob, mtx, me, mats, arm, armname in ob_meshes:
@@ -1712,7 +1834,7 @@ def save_single(operator, scene, filepath="",
     
     #fbxSDKExport.print_skeleton()
     #fbxSDKExport.print_mesh()
-    #fbxSDKExport.print_takes()
+    fbxSDKExport.print_takes()
     
     fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
     
