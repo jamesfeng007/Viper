@@ -62,6 +62,85 @@ from bpy_extras.io_utils import (
 
 IOFBXOrientationHelper = orientation_helper_factory("IOFBXOrientationHelper", axis_forward='-Z', axis_up='Y')
 
+class ImportSdkFBX(bpy.types.Operator, ImportHelper, IOFBXOrientationHelper):
+    bl_idname = "import_scene_sdk.fbx"
+    bl_label = "Import FBX SDK"
+    bl_options = {'UNDO', 'PRESET'}
+    
+    directory = StringProperty()
+
+    filename_ext = ".fbx"
+    filter_glob = StringProperty(default="*.fbx", options={'HIDDEN'})    
+    
+    automatic_bone_orientation = BoolProperty(
+            name="Automatic Bone Orientation",
+            description="Try to align the major bone axis with the bone children",
+            default=False,
+            )
+    primary_bone_axis = EnumProperty(
+            name="Primary Bone Axis",
+            items=(('X', "X Axis", ""),
+                   ('Y', "Y Axis", ""),
+                   ('Z', "Z Axis", ""),
+                   ('-X', "-X Axis", ""),
+                   ('-Y', "-Y Axis", ""),
+                   ('-Z', "-Z Axis", ""),
+                   ),
+            default='Y',
+            )
+    secondary_bone_axis = EnumProperty(
+            name="Secondary Bone Axis",
+            items=(('X', "X Axis", ""),
+                   ('Y', "Y Axis", ""),
+                   ('Z', "Z Axis", ""),
+                   ('-X', "-X Axis", ""),
+                   ('-Y', "-Y Axis", ""),
+                   ('-Z', "-Z Axis", ""),
+                   ),
+            default='X',
+            )
+    use_prepost_rot = BoolProperty(
+            name="Use Pre/Post Rotation",
+            description="Use pre/post rotation from FBX transform (you may have to disable that in some cases)",
+            default=True,
+            )
+    global_scale = FloatProperty(
+            name="Scale",
+            min=0.001, max=1000.0,
+            default=1.0,
+            )
+    bake_space_transform = BoolProperty(
+            name="!EXPERIMENTAL! Apply Transform",
+            description="Bake space transform into object data, avoids getting unwanted rotations to objects when "
+                        "target space is not aligned with Blender's space "
+                        "(WARNING! experimental option, use at own risks, known broken with armatures/animations)",
+            default=False,
+            )
+    use_custom_normals = BoolProperty(
+            name="Import Normals",
+            description="Import custom normals, if available (otherwise Blender will recompute them)",
+            default=True,
+            )    
+    
+        
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "automatic_bone_orientation")
+        sub = layout.column()
+        sub.enabled = not self.automatic_bone_orientation
+        sub.prop(self, "primary_bone_axis")
+        sub.prop(self, "secondary_bone_axis")
+        layout.prop(self, "use_prepost_rot")
+        layout.prop(self, "global_scale")
+        layout.prop(self, "bake_space_transform")
+        layout.prop(self, "use_custom_normals")
+        
+    def execute(self, context):
+        keywords = self.as_keywords(ignore=("filter_glob", "directory"))
+        keywords["use_cycles"] = (context.scene.render.engine == 'CYCLES')
+        
+        from . import import_fbx_sdk
+        return import_fbx_sdk.load(self, context, **keywords)
 
 class ImportFBX(bpy.types.Operator, ImportHelper, IOFBXOrientationHelper):
     """Load a FBX file"""
@@ -776,6 +855,8 @@ class ExportSdkFBX(bpy.types.Operator, ExportHelper, IOFBXOrientationHelper):
 def menu_func_import(self, context):
     self.layout.operator(ImportFBX.bl_idname, text="FBX (.fbx)")
 
+def menu_func_import_sdk(self, context):
+    self.layout.operator(ImportSdkFBX.bl_idname, text="FBX_SDK (.fbx)")
 
 def menu_func_export(self, context):
     self.layout.operator(ExportFBX.bl_idname, text="FBX (.fbx)")
@@ -786,6 +867,7 @@ def menu_func_export_sdk(self, context):
 
 classes = (
     ImportFBX,
+    ImportSdkFBX,
     ExportFBX,
     ExportSdkFBX,
 )
@@ -796,12 +878,14 @@ def register():
         bpy.utils.register_class(cls)
 
     bpy.types.INFO_MT_file_import.append(menu_func_import)
+    bpy.types.INFO_MT_file_import.append(menu_func_import_sdk)
     bpy.types.INFO_MT_file_export.append(menu_func_export)
     bpy.types.INFO_MT_file_export.append(menu_func_export_sdk)
 
 
 def unregister():
     bpy.types.INFO_MT_file_import.remove(menu_func_import)
+    bpy.types.INFO_MT_file_import.remove(menu_func_import_sdk)
     bpy.types.INFO_MT_file_export.remove(menu_func_export)
     bpy.types.INFO_MT_file_export.remove(menu_func_export_sdk)
 

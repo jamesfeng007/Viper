@@ -14,7 +14,7 @@ from .fbx_utils import ( ObjectWrapper, FBXExportSettingsMedia, get_blenderID_ke
                          BLENDER_OTHER_OBJECT_TYPES, nors_transformed_gen, )
 from print_util import PrintHelper
 
-from fbx_export import FBXExport, Vector3, Mat4x4, Vector4, ChannelType
+from fbx_ie_lib import FBXExport, Vector3, Mat4x4, Vector4, ChannelType
 
 def to_channel_type(tx_chan, index):
     if tx_chan == 'T':
@@ -275,7 +275,7 @@ def save_single(operator, scene, filepath="",
     # For transforming mesh normals.
     global_matrix_inv_transposed = global_matrix_inv.transposed()        
     
-    fbxSDKExport = FBXExport(5)
+    fbxSDKExport = FBXExport()
     
     if version == 'BIN':
         fbxSDKExport.set_as_ascii(False)
@@ -643,13 +643,13 @@ def save_single(operator, scene, filepath="",
         t_co = [None] * len(me.vertices) * 3
         me.vertices.foreach_get("co", t_co)
         for vertex in grouper_exact(t_co, _nchunk):
-            fbxSDKExport.add_vertex(vertex[0], vertex[1], vertex[2])
+            fbxSDKExport.add_vertex(c_char_p(my_mesh.fbxName.encode('utf-8')), vertex[0], vertex[1], vertex[2])
         del t_co
         
         t_vi = [None] * len(me.loops)
         me.loops.foreach_get("vertex_index", t_vi)
         for ix in t_vi:
-            fbxSDKExport.add_index(ix)
+            fbxSDKExport.add_index(c_char_p(my_mesh.fbxName.encode('utf-8')), ix)
         
         t_ls = [None] * len(me.polygons)
         me.polygons.foreach_get("loop_start", t_ls)
@@ -657,7 +657,7 @@ def save_single(operator, scene, filepath="",
             print("Error: polygons and loops orders do not match!")
                     
         for ls in t_ls:
-            fbxSDKExport.add_loop_start(ls)
+            fbxSDKExport.add_loop_start(c_char_p(my_mesh.fbxName.encode('utf-8')), ls)
             
         del t_vi
         del t_ls            
@@ -690,29 +690,29 @@ def save_single(operator, scene, filepath="",
         me.calc_normals_split()
         me.loops.foreach_get("normal", t_vn)
         for vnormal in grouper_exact(t_vn, _nchunk):
-            fbxSDKExport.add_normal(vnormal[0], vnormal[1], vnormal[2])
+            fbxSDKExport.add_normal(c_char_p(my_mesh.fbxName.encode('utf-8')), vnormal[0], vnormal[1], vnormal[2])
             
         del t_vn
         me.free_normals_split()
         
         if mesh_smooth_type == 'FACE':
             # Write Face Smoothing
-            fbxSDKExport.set_smoothing_mode(0)
+            fbxSDKExport.set_smoothing_mode(c_char_p(my_mesh.fbxName.encode('utf-8')), 0)
             t_ps = [None] * len(me.polygons)
             me.polygons.foreach_get("use_smooth", t_ps)
             for ps in t_ps:
-                fbxSDKExport.add_smoothing(ps)
+                fbxSDKExport.add_smoothing(c_char_p(my_mesh.fbxName.encode('utf-8')), ps)
             del t_ps
         elif mesh_smooth_type == 'EDGE':
             # Write Edge Smoothing
-            fbxSDKExport.set_smoothing_mode(1)
+            fbxSDKExport.set_smoothing_mode(c_char_p(my_mesh.fbxName.encode('utf-8')), 1)
             t_es = [None] * len(me.edges)
             me.edges.foreach_get("use_edge_sharp", t_es)
             for es in t_es:
-                fbxSDKExport.add_smoothing(es)
+                fbxSDKExport.add_smoothing(c_char_p(my_mesh.fbxName.encode('utf-8')), es)
             del t_es
         elif mesh_smooth_type == 'OFF':
-            fbxSDKExport.set_smoothing_mode(-1)
+            fbxSDKExport.set_smoothing_mode(c_char_p(my_mesh.fbxName.encode('utf-8')), -1)
         else:
             raise Exception("invalid mesh_smooth_type: %r" % mesh_smooth_type)
         
@@ -734,14 +734,14 @@ def save_single(operator, scene, filepath="",
             for uvindex, (uvlayer, uvtexture) in enumerate(zip(uvlayers, uvtextures)):
                 uvlayer.data.foreach_get("uv", t_uv)
                 uvco = tuple(zip(*[iter(t_uv)] * 2))
-                fbxSDKExport.create_uv_info(uvindex, c_char_p(uvlayer.name.encode('utf-8')))
+                fbxSDKExport.create_uv_info(c_char_p(my_mesh.fbxName.encode('utf-8')), uvindex, c_char_p(uvlayer.name.encode('utf-8')))
                 uv2idx = tuple(set(uvco))
                 for uv in uv2idx:
-                    fbxSDKExport.add_uv(uvindex, uv[0], uv[1])
+                    fbxSDKExport.add_uv(c_char_p(my_mesh.fbxName.encode('utf-8')), uvindex, uv[0], uv[1])
                 uv2idx = {uv: idx for idx, uv in enumerate(uv2idx)}
                 for chunk in grouper_exact(uvco, _nchunk_idx):
                     for uv in chunk:
-                        fbxSDKExport.add_uv_index(uvindex, uv2idx[uv])    
+                        fbxSDKExport.add_uv_index(c_char_p(my_mesh.fbxName.encode('utf-8')), uvindex, uv2idx[uv])    
             
             del t_uv
             
@@ -1714,7 +1714,7 @@ def save_single(operator, scene, filepath="",
     #fbxSDKExport.print_mesh()
     #fbxSDKExport.print_takes()
     
-    fbxSDKExport.export(c_char_p(filepath.encode('utf-8')))
+    fbxSDKExport.fbx_export(c_char_p(filepath.encode('utf-8')))
     
     # Clear cached ObjectWrappers!
     ObjectWrapper.cache_clear()    
