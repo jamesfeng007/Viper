@@ -10,11 +10,15 @@
       <Filter>Common</Filter>
     </ClCompile>
     <ClCompile Include="Exporter.cpp" />
+    <ClCompile Include="Importer.cpp" />
+    <ClCompile Include="FbxTools.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common\Common.h">
       <Filter>Common</Filter>
     </ClInclude>
     <ClInclude Include="Exporter.h" />
+    <ClInclude Include="Importer.h" />
+    <ClInclude Include="FbxTools.h" />
   </ItemGroup>
 </Project>
