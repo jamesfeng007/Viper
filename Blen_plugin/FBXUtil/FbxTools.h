@@ -26,6 +26,7 @@ namespace FBXUtil
 	};
 
 	typedef Vector2<int> IntVector2;
+	typedef Vector2<FbxUInt64> UInt64Vector2;
 
 	struct Vector3
 	{
@@ -57,6 +58,48 @@ namespace FBXUtil
 		}
 
 		double x, y, z, w;
+	};
+
+	struct Node
+	{
+		Node()
+		{
+
+		}
+
+		Node(FbxUInt64 _uuid, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
+			: Node()
+		{
+			lclTranslation = _lclTranslation;
+			lclRotation = _lclRotation;
+			lclScaling = _lclScaling;
+			uuid = _uuid;
+
+		}
+
+		Node(FbxUInt64 _uuid, FbxDouble3 _lclTranslation, FbxDouble3 _lclRotation, FbxDouble3 _lclScaling)
+			: Node(_uuid, Vector3(_lclTranslation[0], _lclTranslation[1], _lclTranslation[2]),
+				Vector3(_lclRotation[0], _lclRotation[1], _lclRotation[2]), Vector3(_lclScaling[0], _lclScaling[1], _lclScaling[2]))
+		{
+
+		}
+
+		FbxUInt64 uuid;
+		std::string nodeName;
+		Vector3 lclTranslation;
+		Vector3 lclRotation;
+		Vector3 lclScaling;
+		Vector3 GeometricTranslation;
+		Vector3 GeometricRotation;
+		Vector3 GeometricScaling;
+		Vector3 RotationOffset;
+		Vector3 RotationPivot;
+		Vector3 ScalingOffset;
+		Vector3 ScalingPivot;
+		Vector3 PreRotation;
+		Vector3 PostRotation;
+		int RotationOrder;
+		bool RotationActive;
 	};
 
 	struct Mat4x4
@@ -148,7 +191,7 @@ namespace FBXUtil
 			mUVIndices = std::vector<int>();
 		}
 
-		LayerElementUVInfo(int index, char* n)
+		LayerElementUVInfo(int index, const char* n)
 			: LayerElementUVInfo()
 		{
 			uvIndex = index;
@@ -161,7 +204,7 @@ namespace FBXUtil
 		std::vector<int> mUVIndices;
 	};
 
-	struct Texture
+	struct Texture : Node
 	{
 		Texture()
 		{
@@ -194,7 +237,7 @@ namespace FBXUtil
 		std::string matProp;
 	};
 
-	struct Material
+	struct Material : Node
 	{
 		Material()
 		{
@@ -216,7 +259,7 @@ namespace FBXUtil
 		FbxDouble3 diffuseColor;
 	};
 
-	struct Mesh
+	struct Mesh : Node
 	{
 		Mesh()
 		{
@@ -229,46 +272,18 @@ namespace FBXUtil
 			mMatIndices = std::vector<int>();
 			mBinormals = std::vector<Vector3>();
 			mTangents = std::vector<Vector3>();
-		}
-
-		Mesh(char* name)
-			: Mesh()
-		{
-			mMeshName = std::string(name);
-		}
-
-		Mesh(const char* name, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
-			: Mesh()
-		{
-			lclTranslation = _lclTranslation;
-			lclRotation = _lclRotation;
-			lclScaling = _lclScaling;
-			mMeshName = std::string(name);
 			mSmoothMode = -1;
+			mMatMapping = -1;
+			mMatRef = -1;
 		}
 
-		Mesh(const char* name, FbxDouble3 _lclTranslation, FbxDouble3 _lclRotation, FbxDouble3 _lclScaling)
-			: Mesh(name, Vector3(_lclTranslation[0], _lclTranslation[1], _lclTranslation[2]),
-				Vector3(_lclRotation[0], _lclRotation[1], _lclRotation[2]), Vector3(_lclScaling[0], _lclScaling[1], _lclScaling[2]))
+		Mesh(const char* name)
+			: Mesh()
 		{
-
+			mMeshName = std::string(name);
 		}
 
 		std::string mMeshName;
-		Vector3 lclTranslation;
-		Vector3 lclRotation;
-		Vector3 lclScaling;
-		Vector3 GeometricTranslation;
-		Vector3 GeometricRotation;
-		Vector3 GeometricScaling;
-		Vector3 RotationOffset;
-		Vector3 RotationPivot;
-		Vector3 ScalingOffset;
-		Vector3 ScalingPivot;
-		Vector3 PreRotation;
-		Vector3 PostRotation;
-		int RotationOrder;
-		bool RotationActive;
 		std::vector<Vector3> mVertices;
 		std::vector<int> mIndices;
 		std::vector<int> mLoopStart;
@@ -280,6 +295,9 @@ namespace FBXUtil
 		std::map<int, LayerElementUVInfo> mUVInfos;
 		std::vector<IntVector2> edges;
 		std::vector<int> mMatIndices;
+		int mMatMapping; //FbxLayerElement::EMappingMode: eByPolygon-0, eAllSame-1
+		int mMatRef; //FbxLayerElement::EReferenceMode: eDirect-0, eIndex-1, eIndexToDirect-2
+		std::string matElemName;
 		std::vector<Vector3> mBinormals;
 		std::string binormalName;
 		std::vector<Vector3> mTangents;
@@ -448,6 +466,9 @@ namespace FBXUtil
 	std::ostream& operator<< (std::ostream &os, const Mat4x4& mat);
 
 	Mesh& GetMesh(char* name, std::map<std::string, Mesh>& meshLoader);
+	LayerElementUVInfo& GetUVInfo(int uvIndex, const char* name, Mesh& mesh);
 	void PrintMesh(const Mesh& mesh);
+	void PrintMaterial(const Material& mat);
+	void PrintTexture(const Texture& tex);
 }
 

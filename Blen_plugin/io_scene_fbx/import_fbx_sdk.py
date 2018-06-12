@@ -4,7 +4,7 @@ import array
 import bpy
 from mathutils import Matrix, Euler, Vector
 from . import fbx_utils, data_types
-from fbx_ie_lib import FBXImport, GlobalSettings, ObjectTransformProp, LayerElementInfo
+from fbx_ie_lib import FBXImport, GlobalSettings, ObjectTransformProp, LayerElementInfo, Vector3, UInt64Vector2
 from collections import namedtuple
 from .fbx_utils import (
     units_blender_to_fbx_factor,
@@ -21,6 +21,7 @@ if "bpy" in locals():
         
 FBXImportSettings = namedtuple("FBXImportSettings", (
     "global_matrix", "global_scale", "bake_space_transform", "use_custom_normals", "global_matrix_inv_transposed", "global_matrix_inv",
+    "cycles_material_wrap_map", "use_cycles", "image_cache", "use_image_search",
 ))
 
 FBXTransformData = namedtuple("FBXTransformData", (
@@ -289,12 +290,12 @@ class FbxImportHelperNode:
         for child in self.children:
             child.find_correction_matrix(settings, correction_matrix_inv)                
         
-def blen_read_object_transform_preprocess(fbxSDKImport, index, rot_alt_mat, use_prepost_rot):
+def blen_read_model_transform_preprocess(fbxSDKImport, model_index, rot_alt_mat, use_prepost_rot):
     const_vector_zero_3d = 0.0, 0.0, 0.0
     const_vector_one_3d = 1.0, 1.0, 1.0
         
     fbx_object_trans_prop = ObjectTransformProp()
-    fbxSDKImport.get_mesh_object_transform_prop(index, byref(fbx_object_trans_prop))
+    fbxSDKImport.get_model_transform_prop(model_index, byref(fbx_object_trans_prop))
     
     loc = [fbx_object_trans_prop.lclTranslation.x, fbx_object_trans_prop.lclTranslation.y, fbx_object_trans_prop.lclTranslation.z]
     rot = [fbx_object_trans_prop.lclRotation.x, fbx_object_trans_prop.lclRotation.y, fbx_object_trans_prop.lclRotation.z]
@@ -330,15 +331,27 @@ def blen_read_object_transform_preprocess(fbxSDKImport, index, rot_alt_mat, use_
     else:
         pre_rot = const_vector_zero_3d
         pst_rot = const_vector_zero_3d
-        rot_ord = 'XYZ'    
+        rot_ord = 'XYZ'
+        
+    elem_name_utf8 = fbxSDKImport.get_model_name(model_index).decode('utf-8')
+        
+    fbx_obj = FBXElem(
+        b'Model', elem_name_utf8, b"Model", None
+    )        
     
-    return FBXTransformData(loc, geom_loc,
+    return fbx_obj, FBXTransformData(loc, geom_loc,
                             rot, rot_ofs, rot_piv, pre_rot, pst_rot, rot_ord, rot_alt_mat, geom_rot,
                             sca, sca_ofs, sca_piv, geom_sca)
     
+def blen_read_geom_array_gen_allsame(data_len):
+    return zip(*(range(data_len), (0,) * data_len))    
+    
 def blen_read_geom_array_gen_direct(fbx_data, stride):
     fbx_data_len = len(fbx_data)
-    return zip(*(range(fbx_data_len // stride), range(0, fbx_data_len, stride)))    
+    return zip(*(range(fbx_data_len // stride), range(0, fbx_data_len, stride)))
+
+def blen_read_geom_array_gen_indextodirect(fbx_layer_index, stride):
+    return ((bi, fi * stride) for bi, fi in enumerate(fbx_layer_index))
     
 def blen_read_geom_array_setattr(generator, blen_data, blen_attr, fbx_data, stride, item_size, descr, xform):
     """Generic fbx_layer to blen_data setter, generator is expected to yield tuples (ble_idx, fbx_idx)."""
@@ -402,6 +415,31 @@ def blen_read_geom_array_mapped_vert(
     if fbx_layer_mapping == b'ByVertice':
         if fbx_layer_ref == b'Direct':
             assert(fbx_layer_index is None)
+            blen_read_geom_array_setattr(blen_read_geom_array_gen_direct(fbx_layer_data, stride),
+                                         blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
+            return True
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
+    elif fbx_layer_mapping == b'AllSame':
+        if fbx_layer_ref == b'IndexToDirect':
+            assert(fbx_layer_index is None)
+            blen_read_geom_array_setattr(blen_read_geom_array_gen_allsame(len(blen_data)),
+                                         blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
+            return True
+        blen_read_geom_array_error_ref(descr, fbx_layer_ref, quiet)
+    else:
+        blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet)
+
+    return False
+
+def blen_read_geom_array_mapped_edge(
+        mesh, blen_data, blen_attr,
+        fbx_layer_data, fbx_layer_index,
+        fbx_layer_mapping, fbx_layer_ref,
+        stride, item_size, descr,
+        xform=None, quiet=False,
+        ):
+    if fbx_layer_mapping == b'ByEdge':
+        if fbx_layer_ref == b'Direct':
             blen_read_geom_array_setattr(blen_read_geom_array_gen_direct(fbx_layer_data, stride),
                                          blen_data, blen_attr, fbx_layer_data, stride, item_size, descr, xform)
             return True
@@ -531,6 +569,178 @@ def blen_read_geom_layer_normal(fbxSDKImport, mesh_index, mesh, xform=None):
             return True    
     return False
 
+def blen_read_geom_layer_uv(fbxSDKImport, mesh_index, mesh):
+    uv_info_size = fbxSDKImport.get_mesh_uv_info_size(mesh_index)
+    layer_id = b'LayerElementUV'
+    for uv_index in range(uv_info_size):
+        fbx_layerInfo = LayerElementInfo()
+        uv_name = fbxSDKImport.get_uv_info_name(mesh_index, uv_index, byref(fbx_layerInfo))
+        
+        fbx_layer_name = uv_name.decode('utf-8')
+        fbx_layer_mapping = fbx_layerInfo.MappingType
+        fbx_layer_ref = fbx_layerInfo.RefType
+        
+        uv_indice_size = fbxSDKImport.get_mesh_uv_indice_size(mesh_index, uv_index)
+        indices = (c_int * uv_indice_size)()
+        fbxSDKImport.get_mesh_uv_indice(mesh_index, uv_index, byref(indices), len(indices))
+        fbx_layer_index = array.array('l', ())
+        for indice in indices:
+            fbx_layer_index.append(indice)
+            
+        uv_vertice_size = fbxSDKImport.get_mesh_uv_vertice_size(mesh_index, uv_index)
+        vertices = (c_double * (uv_vertice_size * 2))()
+        fbxSDKImport.get_mesh_uv_vertice(mesh_index, uv_index, byref(vertices), len(vertices))
+        fbx_layer_data = array.array(data_types.ARRAY_FLOAT64, ())
+        for v in vertices:
+            fbx_layer_data.append(v)
+            
+        uv_tex = mesh.uv_textures.new(name=fbx_layer_name)
+        uv_lay = mesh.uv_layers[-1]
+        blen_data = uv_lay.data
+
+        # some valid files omit this data
+        if len(fbx_layer_data) == 0:
+            print("%r %r missing data" % (layer_id, fbx_layer_name))
+            continue
+
+        blen_read_geom_array_mapped_polyloop(
+            mesh, blen_data, "uv",
+            fbx_layer_data, fbx_layer_index,
+            fbx_layer_mapping, fbx_layer_ref,
+            2, 2, layer_id,
+            )
+
+def blen_read_geom_layer_smooth(fbxSDKImport, mesh_index, mesh):
+    smooth_size = fbxSDKImport.get_mesh_smoothing_size(mesh_index)
+    if smooth_size == 0:
+        return False
+        
+    smoothings = (c_int * smooth_size)()
+    fbx_layerInfo = LayerElementInfo()
+    fbxSDKImport.get_mesh_smoothing(mesh_index, byref(smoothings), len(smoothings), byref(fbx_layerInfo))
+    fbx_layer_data = array.array('l', ())
+    for s in smoothings:
+        fbx_layer_data.append(s)
+        
+    if len(fbx_layer_data) == 0:
+        return False        
+    
+    layer_id = b'Smoothing'
+    fbx_layer_mapping = fbx_layerInfo.MappingType
+    fbx_layer_ref = fbx_layerInfo.RefType
+    
+    if fbx_layer_mapping == b'ByEdge':
+        # some models have bad edge data, we cant use this info...
+        if not mesh.edges:
+            print("warning skipping sharp edges data, no valid edges...")
+            return False
+
+        blen_data = mesh.edges
+        blen_read_geom_array_mapped_edge(
+            mesh, blen_data, "use_edge_sharp",
+            fbx_layer_data, None,
+            fbx_layer_mapping, fbx_layer_ref,
+            1, 1, layer_id,
+            xform=lambda s: not s,
+            )
+        # We only set sharp edges here, not face smoothing itself...
+        mesh.use_auto_smooth = True
+        mesh.show_edge_sharp = True
+        return False
+    elif fbx_layer_mapping == b'ByPolygon':
+        blen_data = mesh.polygons
+        return blen_read_geom_array_mapped_polygon(
+            mesh, blen_data, "use_smooth",
+            fbx_layer_data, None,
+            fbx_layer_mapping, fbx_layer_ref,
+            1, 1, layer_id,
+            xform=lambda s: (s != 0),  # smoothgroup bitflags, treat as booleans for now
+            )
+    else:
+        print("warning layer %r mapping type unsupported: %r" % (fbx_layer.id, fbx_layer_mapping))
+        return False
+
+def blen_read_geom_layer_material(fbxSDKImport, mesh_index, mesh):
+    indice_size = fbxSDKImport.get_mesh_mat_indice_size(mesh_index)
+    
+    if indice_size == 0:
+        return
+    
+    indices = (c_int * indice_size)()
+    fbx_layerInfo = LayerElementInfo()
+    fbxSDKImport.get_mesh_material_info(mesh_index, byref(indices), len(indices), byref(fbx_layerInfo))
+    fbx_layer_data = array.array('l', ())
+    for index in indices:
+        fbx_layer_data.append(index)    
+    
+    fbx_layer_name = ""
+    fbx_layer_mapping = fbx_layerInfo.MappingType
+    fbx_layer_ref = fbx_layerInfo.RefType
+    layer_id = b'Materials'
+    
+    blen_data = mesh.polygons
+    blen_read_geom_array_mapped_polygon(
+        mesh, blen_data, "material_index",
+        fbx_layer_data, None,
+        fbx_layer_mapping, fbx_layer_ref,
+        1, 1, layer_id,
+        )
+    
+def blen_read_material(fbxSDKImport, settings, material_index):
+    elem_name_utf8 = fbxSDKImport.get_material_name(material_index).decode('utf-8')
+    const_color_white = 1.0, 1.0, 1.0
+    cycles_material_wrap_map = settings.cycles_material_wrap_map
+    ma = bpy.data.materials.new(name=elem_name_utf8)    
+    
+    emissive = Vector3(0.0, 0.0, 0.0)
+    ambient = Vector3(0.0, 0.0, 0.0)
+    diffuse = Vector3(0.0, 0.0, 0.0)
+    fbxSDKImport.get_material_props(material_index, byref(emissive), byref(ambient), byref(diffuse))
+    
+    ma_diff = [diffuse.x, diffuse.y, diffuse.z]
+    ma_spec = const_color_white
+    ma_alpha = 1.0
+    ma_spec_intensity = ma.specular_intensity = 0.25 * 2.0
+    ma_spec_hardness = 9.6
+    ma_refl_factor = 0.0
+    ma_refl_color = const_color_white
+    
+    if settings.use_cycles:
+        from modules import cycles_shader_compat
+        # viewport color
+        ma.diffuse_color = ma_diff
+
+        ma_wrap = cycles_shader_compat.CyclesShaderWrapper(ma)
+        ma_wrap.diffuse_color_set(ma_diff)
+        ma_wrap.specular_color_set([c * ma_spec_intensity for c in ma_spec])
+        ma_wrap.hardness_value_set(((ma_spec_hardness + 3.0) / 5.0) - 0.65)
+        ma_wrap.alpha_value_set(ma_alpha)
+        ma_wrap.reflect_factor_set(ma_refl_factor)
+        ma_wrap.reflect_color_set(ma_refl_color)
+
+        cycles_material_wrap_map[ma] = ma_wrap
+    else:
+        # TODO, number BumpFactor isnt used yet
+        ma.diffuse_color = ma_diff
+        ma.specular_color = ma_spec
+        ma.alpha = ma_alpha
+        if ma_alpha < 1.0:
+            ma.use_transparency = True
+            ma.transparency_method = 'RAYTRACE'
+        ma.specular_intensity = ma_spec_intensity
+        ma.specular_hardness = ma_spec_hardness * 5.10 + 1.0
+
+        if ma_refl_factor != 0.0:
+            ma.raytrace_mirror.use = True
+            ma.raytrace_mirror.reflect_factor = ma_refl_factor
+            ma.mirror_color = ma_refl_color
+            
+    fbx_obj = FBXElem(
+        b'Material', elem_name_utf8, b"Material", None
+    )
+        
+    return fbx_obj, ma                
+
 def blen_read_geom(fbxSDKImport, settings, mesh_index):
     from itertools import chain    
     geom_mat_co = settings.global_matrix if settings.bake_space_transform else None
@@ -586,6 +796,21 @@ def blen_read_geom(fbxSDKImport, settings, mesh_index):
         mesh.polygons.foreach_set("loop_start", poly_loop_starts)
         mesh.polygons.foreach_set("loop_total", poly_loop_totals)
         
+        blen_read_geom_layer_material(fbxSDKImport, mesh_index, mesh)
+        blen_read_geom_layer_uv(fbxSDKImport, mesh_index, mesh)
+        
+    edge_size = fbxSDKImport.get_mesh_edge_size(mesh_index)
+    if edge_size > 0:
+        edges = (c_int * (edge_size * 2))()
+        fbxSDKImport.get_mesh_edges(mesh_index, byref(edges), len(edges))
+        edges_conv = array.array('i', ())
+        for e in edges:
+            edges_conv.append(e) 
+        mesh.edges.add(edge_size)
+        mesh.edges.foreach_set("vertices", edges_conv)
+        
+    ok_smooth = blen_read_geom_layer_smooth(fbxSDKImport, mesh_index, mesh)
+    
     ok_normals = False
     if settings.use_custom_normals:
         mesh.create_normals_split()
@@ -598,17 +823,14 @@ def blen_read_geom(fbxSDKImport, settings, mesh_index):
 
     mesh.validate(clean_customdata=False)  # *Very* important to not remove lnors here!
     
-    print("ok_normals")
-    print(ok_normals)
     if ok_normals:
         clnors = array.array('f', [0.0] * (len(mesh.loops) * 3))
         mesh.loops.foreach_get("normal", clnors)
-        '''
+        
         if not ok_smooth:
             mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
             ok_smooth = True
-        '''
-
+        
         mesh.normals_split_custom_set(tuple(zip(*(iter(clnors),) * 3)))
         mesh.use_auto_smooth = True
         mesh.show_edge_sharp = True
@@ -616,14 +838,76 @@ def blen_read_geom(fbxSDKImport, settings, mesh_index):
         mesh.calc_normals()
 
     if settings.use_custom_normals:
-        mesh.free_normals_split()    
+        mesh.free_normals_split()
+        
+    if not ok_smooth:
+        mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))    
         
     fbx_obj = FBXElem(
-        1, elem_name_utf8, b"Mesh", None
+        b'Geometry', elem_name_utf8, b"Geometry", None
     )
         
-    return mesh, fbx_obj
+    return fbx_obj, mesh
 
+def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
+    import os
+    from bpy_extras import image_utils
+    
+    imagepath = None
+    print("blen_read_texture_image")
+    elem_name_utf8 = fbxSDKImport.get_texture_name(texture_index).decode('utf-8')
+    
+    image_cache = settings.image_cache
+    
+    filepath = fbxSDKImport.get_texture_rel_filename(texture_index).decode('utf-8')
+    if filepath:
+        filepath = os.path.join(basedir, filepath)
+        filepath = filepath.replace('\\', '/') if (os.sep == '/') else filepath.replace('/', '\\')
+        filepath = bpy.path.native_pathsep(filepath)
+        if os.path.exists(filepath):
+            imagepath = filepath
+    
+    if imagepath is None:
+        filepath = fbxSDKImport.get_texture_filename(texture_index).decode('utf-8')
+        if filepath:
+            filepath = filepath.replace('\\', '/') if (os.sep == '/') else filepath.replace('/', '\\')
+            filepath = bpy.path.native_pathsep(filepath)
+            if os.path.exists(filepath):
+                imagepath = filepath
+    
+    if imagepath is None:
+        print("Error, could not find any file path in ", texture_index)
+        print("       Falling back to: ", elem_name_utf8)
+        filepath = elem_name_utf8
+        filepath = filepath.replace('\\', '/') if (os.sep == '/') else filepath.replace('/', '\\')
+        imagepath = filepath
+        
+    print(imagepath)
+        
+    image = image_cache.get(filepath)
+    if image is not None:
+        # Data is only embedded once, we may have already created the image but still be missing its data!
+        if not image.has_data:
+            pack_data_from_content(image, fbx_obj)
+        return image        
+
+    image = image_utils.load_image(
+        filepath,
+        dirname=basedir,
+        place_holder=True,
+        recursive=settings.use_image_search,
+        )
+    
+    image_cache[filepath] = image
+    # name can be ../a/b/c
+    image.name = os.path.basename(elem_name_utf8)
+    
+    fbx_obj = FBXElem(
+        b'Texture', elem_name_utf8, b"Texture", None
+    )    
+    
+    return fbx_obj, image    
+    
 def load(operator, context, filepath="",
          use_manual_orientation=False,
          axis_forward='-Z',
@@ -655,7 +939,7 @@ def load(operator, context, filepath="",
     fbxSDKImport = FBXImport()
     fbxSDKImport.fbx_import(c_char_p(filepath.encode('utf-8')))
     
-    #fbxSDKImport.print_mesh()
+    fbxSDKImport.print_mesh()
     
     if bpy.ops.object.mode_set.poll():
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -663,6 +947,16 @@ def load(operator, context, filepath="",
     # deselect all
     if bpy.ops.object.select_all.poll():
         bpy.ops.object.select_all(action='DESELECT')
+        
+    basedir = os.path.dirname(filepath)
+        
+    cycles_material_wrap_map = {}
+    image_cache = {}
+    if not use_cycles:
+        texture_cache = {}    
+        
+    # Tables: (FBX_byte_id -> [FBX_data, None or Blender_datablock])
+    fbx_table_nodes = {}        
         
     scene = context.scene
         
@@ -700,25 +994,70 @@ def load(operator, context, filepath="",
     scene.render.fps_base = scene.render.fps / real_fps
     
     settings = FBXImportSettings(
-        global_matrix, global_scale, bake_space_transform, use_custom_normals, global_matrix_inv_transposed, global_matrix_inv
+        global_matrix, global_scale, bake_space_transform, use_custom_normals, global_matrix_inv_transposed, global_matrix_inv,
+        cycles_material_wrap_map, use_cycles, image_cache, use_image_search,
     )
     
     fbx_helper_nodes = {}
     # create scene root
     fbx_helper_nodes[0] = root_helper = FbxImportHelperNode(None, None, None, False)
-    root_helper.is_root = True    
+    root_helper.is_root = True
+    
+    model_count = fbxSDKImport.get_model_count()
+    for i in range(model_count):
+        fbx_uuid = fbxSDKImport.get_model_uuid(i)
+        fbx_obj, transform_data = blen_read_model_transform_preprocess(fbxSDKImport, i, Matrix(), use_prepost_rot)
+        fbx_helper_nodes[fbx_uuid] = FbxImportHelperNode(fbx_obj, None, transform_data, False)
     
     mesh_count = fbxSDKImport.get_mesh_count()
     for i in range(mesh_count):
-        bl_data, fbx_obj = blen_read_geom(fbxSDKImport, settings, i)
-        transform_data = blen_read_object_transform_preprocess(fbxSDKImport, i, Matrix(), use_prepost_rot)
-
-        fbx_helper_nodes[1] = FbxImportHelperNode(fbx_obj, bl_data, transform_data, False)
+        fbx_uuid = fbxSDKImport.get_mesh_uuid(i)
+        fbx_obj, bl_data = blen_read_geom(fbxSDKImport, settings, i)
+        fbx_table_nodes[fbx_uuid] = [fbx_obj, bl_data]
         
+    material_count = fbxSDKImport.get_material_count()
+    for i in range(material_count):
+        fbx_uuid = fbxSDKImport.get_material_uuid(i)
+        fbx_obj, bl_data = blen_read_material(fbxSDKImport, settings, i)
+        fbx_table_nodes[fbx_uuid] = [fbx_obj, bl_data]
+        
+    texture_count = fbxSDKImport.get_texture_count()
+    for i in range(texture_count):
+        fbx_uuid = fbxSDKImport.get_texture_uuid(i)
+        fbx_obj, bl_data = blen_read_texture_image(fbxSDKImport, settings, i, basedir)
+        fbx_table_nodes[fbx_uuid] = [fbx_obj, bl_data]
+        
+    connection_size = fbxSDKImport.get_connection_count()
+    connections = (UInt64Vector2 * connection_size)()
+    fbxSDKImport.get_connections(byref(connections), len(connections))
+    print("connections")
+    for c in connections:
+        print("%d, %d" % (c.x, c.y))
+        c_dst = c.x
+        c_src = c.y
+        parent = fbx_helper_nodes.get(c_dst)
+        if parent is None:
+            continue
+        
+        child = fbx_helper_nodes.get(c_src)
+        if child is None:
+            # add blender data (meshes, lights, cameras, etc.) to a helper node
+            fbx_sdata, bl_data = p_item = fbx_table_nodes.get(c_src, (None, None))
+            if fbx_sdata is None:
+                continue
+            if fbx_sdata.id not in {b'Geometry'}:
+                continue
+            parent.bl_data = bl_data
+        else:
+            # set parent
+            child.parent = parent
+    
+    '''    
     parent = fbx_helper_nodes.get(0)
     child = fbx_helper_nodes.get(1)
     child.parent = parent
-            
+    '''
+              
     root_helper.find_correction_matrix(settings)
     root_helper.build_hierarchy(settings, scene)
     root_helper.link_hierarchy(settings, scene)

@@ -14,6 +14,37 @@ namespace FBXUtil
 		return meshLoader.at(meshName);
 	}
 
+	LayerElementUVInfo& GetUVInfo(int uvIndex, const char* name, Mesh& mesh)
+	{
+		std::map<int, LayerElementUVInfo>::iterator ite = mesh.mUVInfos.find(uvIndex);
+		if (ite == mesh.mUVInfos.end())
+		{
+			LayerElementUVInfo uvInfo = LayerElementUVInfo(uvIndex, name);
+			mesh.mUVInfos.insert(std::make_pair(uvIndex, uvInfo));
+		}
+		return mesh.mUVInfos.at(uvIndex);
+	}
+
+	void PrintMaterial(const Material& mat)
+	{
+		std::cout << "Material [material name: " << mat.materialName << ", shading name: " << mat.shadingName << "]" << std::endl;
+		std::cout << "diffuse color: " << mat.diffuseColor[0] << ", " << mat.diffuseColor[1] << ", " << mat.diffuseColor[2] << std::endl;
+		std::cout << "ambient color: " << mat.ambientColor[0] << ", " << mat.ambientColor[1] << ", " << mat.ambientColor[2] << std::endl;
+		std::cout << "emissive color: " << mat.emissiveColor[0] << ", " << mat.emissiveColor[1] << ", " << mat.emissiveColor[2] << std::endl;
+	}
+
+	void PrintTexture(const Texture& tex)
+	{
+		std::cout << "name: " << tex.name << " filename: " << tex.fileName << " rel filename: " << tex.relFileName << std::endl << " alphaSource: " << tex.alphaSource << " premultiplyAlpha: " << tex.premultiplyAlpha
+			<< " currentMappingType: " << tex.currentMappingType << " UVSet: " << tex.UVSet << " wrapModeU: " << tex.wrapModeU << " wrapModeV: " << tex.wrapModeV << std::endl << " translation: " << tex.translation
+			<< " scaling: " << tex.scaling << " useMaterial: " << tex.useMaterial << " useMipMap: " << tex.useMipMap << " mat Prop: " << tex.matProp << std::endl;
+		std::cout << "mat Parent: " << std::endl;
+		for (const std::string& parentMat : tex.parentMat)
+		{
+			std::cout << parentMat << ", " << std::endl;
+		}
+	}
+
 	void PrintMesh(const Mesh& mesh)
 	{
 		for (Vector3 v : mesh.mVertices)

@@ -135,7 +135,6 @@ bool Exporter::BuildDeformer(FbxScene* pScene, FbxNode* pMeshNode, FbxNode* pSke
 
 bool Exporter::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 {
-
 	for (std::pair<std::string, Mesh> _mesh : mMesh)
 	{
 		Mesh& mesh = _mesh.second;
@@ -343,8 +342,6 @@ bool Exporter::BuildMesh(FbxScene* pScene, FbxNode*& pMeshNode)
 		}
 	}
 
-
-
 	return true;
 }
 
@@ -536,8 +533,7 @@ bool Exporter::CreateScene(FbxScene* pScene)
 void Exporter::CreateUVInfo(char* meshName, int uvIndex, char* name)
 {
 	Mesh& mesh = GetMesh(meshName, mMesh);
-	LayerElementUVInfo uvInfo = LayerElementUVInfo(uvIndex, name);
-	mesh.mUVInfos.insert(std::make_pair(uvIndex, uvInfo));
+	GetUVInfo(uvIndex, name, mesh);
 }
 
 void Exporter::AddVertex(char* name, double x, double y, double z)
@@ -903,26 +899,14 @@ void Exporter::PrintMesh()
 
 	for (const Material& mat : mMaterials)
 	{
-		std::cout << "Material [material name: " << mat.materialName << ", shading name: " << mat.shadingName << "]" << std::endl;
-		std::cout << "diffuse color: " << mat.diffuseColor[0] << ", " << mat.diffuseColor[1] << ", " << mat.diffuseColor[2] << std::endl;
-		std::cout << "ambient color: " << mat.ambientColor[0] << ", " << mat.ambientColor[1] << ", " << mat.ambientColor[2] << std::endl;
-		std::cout << "emissive color: " << mat.emissiveColor[0] << ", " << mat.emissiveColor[1] << ", " << mat.emissiveColor[2] << std::endl;
+		PrintMaterial(mat);
 	}
 
 	std::cout << "Textures:" << std::endl;
 	for (std::pair<std::string, Texture> _tex : mTextures)
 	{
-		const Texture& tex = _tex.second;
-		std::cout << "name: " << tex.name << " filename: " << tex.fileName << " rel filename: " << tex.relFileName << std::endl << " alphaSource: " << tex.alphaSource << " premultiplyAlpha: " << tex.premultiplyAlpha
-			<< " currentMappingType: " << tex.currentMappingType << " UVSet: " << tex.UVSet << " wrapModeU: " << tex.wrapModeU << " wrapModeV: " << tex.wrapModeV << std::endl << " translation: " << tex.translation
-			<< " scaling: " << tex.scaling << " useMaterial: " << tex.useMaterial << " useMipMap: " << tex.useMipMap << " mat Prop: " << tex.matProp << std::endl;
-		std::cout << "mat Parent: " << std::endl;
-		for (const std::string& parentMat : tex.parentMat)
-		{
-			std::cout << parentMat << ", " << std::endl;
-		}
+		PrintTexture(_tex.second);
 	}
-	
 }
 
 bool Exporter::Export(char* filePath)
