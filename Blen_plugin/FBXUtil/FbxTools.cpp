@@ -25,6 +25,16 @@ namespace FBXUtil
 		return mesh.mUVInfos.at(uvIndex);
 	}
 
+	void PrintNode(const Node& node)
+	{
+		std::cout << "node name: " << node.nodeName << std::endl;
+		std::cout << "node translation: " << node.lclTranslation << " rotation: " << node.lclRotation << " scale: " << node.lclScaling << std::endl;
+		std::cout << "node GeometricTranslation: " << node.GeometricTranslation << " GeometricRotation: " << node.GeometricRotation << " GeometricScaling: " << node.GeometricScaling << std::endl;
+		std::cout << "node RotationOffset: " << node.RotationOffset << " RotationPivot: " << node.RotationPivot << " ScalingOffset: " << node.ScalingOffset << std::endl;
+		std::cout << "node ScalingPivot: " << node.ScalingPivot << " PreRotation: " << node.PreRotation << " PostRotation: " << node.PostRotation << std::endl;
+		std::cout << "node RotationOrder: " << node.RotationOrder << " RotationActive: " << node.RotationActive << std::endl;
+	}
+
 	void PrintMaterial(const Material& mat)
 	{
 		std::cout << "Material [material name: " << mat.materialName << ", shading name: " << mat.shadingName << "]" << std::endl;
@@ -37,7 +47,7 @@ namespace FBXUtil
 	{
 		std::cout << "name: " << tex.name << " filename: " << tex.fileName << " rel filename: " << tex.relFileName << std::endl << " alphaSource: " << tex.alphaSource << " premultiplyAlpha: " << tex.premultiplyAlpha
 			<< " currentMappingType: " << tex.currentMappingType << " UVSet: " << tex.UVSet << " wrapModeU: " << tex.wrapModeU << " wrapModeV: " << tex.wrapModeV << std::endl << " translation: " << tex.translation
-			<< " scaling: " << tex.scaling << " useMaterial: " << tex.useMaterial << " useMipMap: " << tex.useMipMap << " mat Prop: " << tex.matProp << std::endl;
+			<< " scaling: " << tex.scaling << " rotation: " << tex.rotation << " useMaterial: " << tex.useMaterial << " useMipMap: " << tex.useMipMap << " mat Prop: " << tex.matProp << std::endl;
 		std::cout << "mat Parent: " << std::endl;
 		for (const std::string& parentMat : tex.parentMat)
 		{
@@ -47,6 +57,8 @@ namespace FBXUtil
 
 	void PrintMesh(const Mesh& mesh)
 	{
+		std::cout << "mesh name: " << mesh.mMeshName << std::endl;
+
 		for (Vector3 v : mesh.mVertices)
 		{
 			std::cout << "vertex[ " << v << " ]" << std::endl;
@@ -80,13 +92,6 @@ namespace FBXUtil
 			std::cout << s << ", ";
 		}
 		std::cout << " ]" << std::endl;
-
-		std::cout << "mesh name: " << mesh.mMeshName << std::endl;
-		std::cout << "mesh translation: " << mesh.lclTranslation << " rotation: " << mesh.lclRotation << " scale: " << mesh.lclScaling << std::endl;
-		std::cout << "mesh GeometricTranslation: " << mesh.GeometricTranslation << " GeometricRotation: " << mesh.GeometricRotation << " GeometricScaling: " << mesh.GeometricScaling << std::endl;
-		std::cout << "mesh RotationOffset: " << mesh.RotationOffset << " RotationPivot: " << mesh.RotationPivot << " ScalingOffset: " << mesh.ScalingOffset << std::endl;
-		std::cout << "mesh ScalingPivot: " << mesh.ScalingPivot << " PreRotation: " << mesh.PreRotation << " PostRotation: " << mesh.PostRotation << std::endl;
-		std::cout << "mesh RotationOrder: " << mesh.RotationOrder << " RotationActive: " << mesh.RotationActive << std::endl;
 
 		for (const IntVector2& edge : mesh.edges)
 		{

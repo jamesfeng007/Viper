@@ -4,7 +4,7 @@ import array
 import bpy
 from mathutils import Matrix, Euler, Vector
 from . import fbx_utils, data_types
-from fbx_ie_lib import FBXImport, GlobalSettings, ObjectTransformProp, LayerElementInfo, Vector3, UInt64Vector2
+from fbx_ie_lib import FBXImport, GlobalSettings, ObjectTransformProp, LayerElementInfo, Vector3, UInt64Vector2, IntVector2
 from collections import namedtuple
 from .fbx_utils import (
     units_blender_to_fbx_factor,
@@ -756,7 +756,7 @@ def blen_read_geom(fbxSDKImport, settings, mesh_index):
     vertices = (c_double * (vertice_size * 3))()
     fbxSDKImport.get_mesh_vertice(mesh_index, byref(vertices), len(vertices))
     fbx_verts = array.array(data_types.ARRAY_FLOAT64, ())
-    print("mesh_name: %s" % mesh_name)
+    
     for v in vertices:
         fbx_verts.append(v)
      
@@ -854,7 +854,6 @@ def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
     from bpy_extras import image_utils
     
     imagepath = None
-    print("blen_read_texture_image")
     elem_name_utf8 = fbxSDKImport.get_texture_name(texture_index).decode('utf-8')
     
     image_cache = settings.image_cache
@@ -882,8 +881,6 @@ def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
         filepath = filepath.replace('\\', '/') if (os.sep == '/') else filepath.replace('/', '\\')
         imagepath = filepath
         
-    print(imagepath)
-        
     image = image_cache.get(filepath)
     if image is not None:
         # Data is only embedded once, we may have already created the image but still be missing its data!
@@ -902,8 +899,16 @@ def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
     # name can be ../a/b/c
     image.name = os.path.basename(elem_name_utf8)
     
+    mat_prop = fbxSDKImport.get_texture_mat_prop(texture_index)
+    translation = Vector3(0.0, 0.0, 0.0)
+    rotation = Vector3(0.0, 0.0, 0.0)
+    scaling = Vector3(0.0, 0.0, 0.0)
+    wrap_mode = IntVector2(0, 0)
+    fbxSDKImport.get_texture_mapping(texture_index, byref(translation), byref(rotation), byref(scaling), byref(wrap_mode))
+    
     fbx_obj = FBXElem(
-        b'Texture', elem_name_utf8, b"Texture", None
+        b'Texture', elem_name_utf8, b"Texture", (mat_prop, ((translation.x, translation.y, translation.z), (rotation.x, rotation.y, rotation.z), 
+                                                 (scaling.x, scaling.y, scaling.z), (bool(wrap_mode.x), bool(wrap_mode.y))))
     )    
     
     return fbx_obj, image    
@@ -940,6 +945,7 @@ def load(operator, context, filepath="",
     fbxSDKImport.fbx_import(c_char_p(filepath.encode('utf-8')))
     
     fbxSDKImport.print_mesh()
+    fbxSDKImport.print_node()
     
     if bpy.ops.object.mode_set.poll():
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -1003,17 +1009,23 @@ def load(operator, context, filepath="",
     fbx_helper_nodes[0] = root_helper = FbxImportHelperNode(None, None, None, False)
     root_helper.is_root = True
     
+    print("FBX import: Nodes...")
+    
     model_count = fbxSDKImport.get_model_count()
     for i in range(model_count):
         fbx_uuid = fbxSDKImport.get_model_uuid(i)
         fbx_obj, transform_data = blen_read_model_transform_preprocess(fbxSDKImport, i, Matrix(), use_prepost_rot)
         fbx_helper_nodes[fbx_uuid] = FbxImportHelperNode(fbx_obj, None, transform_data, False)
+        
+    print("FBX import: Meshes...")
     
     mesh_count = fbxSDKImport.get_mesh_count()
     for i in range(mesh_count):
         fbx_uuid = fbxSDKImport.get_mesh_uuid(i)
         fbx_obj, bl_data = blen_read_geom(fbxSDKImport, settings, i)
         fbx_table_nodes[fbx_uuid] = [fbx_obj, bl_data]
+        
+    print("FBX import: Materials & Textures...")
         
     material_count = fbxSDKImport.get_material_count()
     for i in range(material_count):
@@ -1027,12 +1039,15 @@ def load(operator, context, filepath="",
         fbx_obj, bl_data = blen_read_texture_image(fbxSDKImport, settings, i, basedir)
         fbx_table_nodes[fbx_uuid] = [fbx_obj, bl_data]
         
+    print("FBX import: Connections...")
+        
     connection_size = fbxSDKImport.get_connection_count()
     connections = (UInt64Vector2 * connection_size)()
     fbxSDKImport.get_connections(byref(connections), len(connections))
-    print("connections")
+    
+    print("FBX import: Objects & Armatures...")
+    
     for c in connections:
-        print("%d, %d" % (c.x, c.y))
         c_dst = c.x
         c_src = c.y
         parent = fbx_helper_nodes.get(c_dst)
@@ -1051,17 +1066,229 @@ def load(operator, context, filepath="",
         else:
             # set parent
             child.parent = parent
-    
-    '''    
-    parent = fbx_helper_nodes.get(0)
-    child = fbx_helper_nodes.get(1)
-    child.parent = parent
-    '''
               
     root_helper.find_correction_matrix(settings)
     root_helper.build_hierarchy(settings, scene)
     root_helper.link_hierarchy(settings, scene)
     root_helper.print_info(0)
+    
+    print("FBX import: Assign materials...")
+    # link Material's to Geometry (via Model's)
+    for fbx_uuid, fbx_item in fbx_table_nodes.items():
+        fbx_obj, blen_data = fbx_item
+        if fbx_obj.id != b'Geometry':
+            continue
+
+        mesh = fbx_table_nodes.get(fbx_uuid, (None, None))[1]   #found Mesh
+
+        # can happen in rare cases
+        if mesh is None:
+            continue
+        
+        done_mats = set()
+        
+        for c in connections:
+            c_parent = c.x
+            c_child = c.y
+            if fbx_uuid == c_child:
+                fbx_lnk_uuid = c_parent     #found Model
+                
+                for c_lnk in connections:
+                    c_lnk_parent = c_lnk.x
+                    c_lnk_child = c_lnk.y
+                    if fbx_lnk_uuid == c_lnk_parent and fbx_table_nodes.get(c_lnk_child, (None, None))[0].id == b'Material':
+                        material = fbx_table_nodes.get(c_lnk_child, (None, None))[1]
+                        
+                        if material not in done_mats:
+                            mesh.materials.append(material)
+                            done_mats.add(material)                        
+                
+        # We have to validate mesh polygons' mat_idx, see T41015!
+        # Some FBX seem to have an extra 'default' material which is not defined in FBX file.
+        if mesh.validate_material_indices():
+            print("WARNING: mesh '%s' had invalid material indices, those were reset to first material" % mesh.name)                
+                
+    print("FBX import: Assign textures...")
+    
+    if not use_cycles:
+        # Simple function to make a new mtex and set defaults
+        def material_mtex_new(material, image, tex_map):
+            tex = texture_cache.get(image)
+            if tex is None:
+                tex = bpy.data.textures.new(name=image.name, type='IMAGE')
+                tex.image = image
+                texture_cache[image] = tex
+
+                # copy custom properties from image object to texture
+                for key, value in image.items():
+                    tex[key] = value
+
+                # delete custom properties on the image object
+                for key in image.keys():
+                    del image[key]
+
+            mtex = material.texture_slots.add()
+            mtex.texture = tex
+            mtex.texture_coords = 'UV'
+            mtex.use_map_color_diffuse = False
+
+            # No rotation here...
+            mtex.offset[:] = tex_map[0]
+            mtex.scale[:] = tex_map[2]
+            return mtex    
+    
+    material_images = {}
+    for fbx_uuid, fbx_item in fbx_table_nodes.items():
+        fbx_obj, blen_data = fbx_item
+        if fbx_obj.id != b'Material':
+            continue
+        
+        material = fbx_table_nodes.get(fbx_uuid, (None, None))[1]
+        
+        for c in connections:
+            c_parent = c.x
+            c_child = c.y
+            if fbx_uuid == c_parent:
+                fbx_lnk, image = fbx_table_nodes.get(c_child, (None, None))
+
+                if use_cycles:
+                    ma_wrap = cycles_material_wrap_map[material]
+                    tex_map = fbx_lnk[3][1]
+                    lnk_type = fbx_lnk[3][0]
+
+                    if (tex_map[0] == (0.0, 0.0, 0.0) and
+                            tex_map[1] == (0.0, 0.0, 0.0) and
+                            tex_map[2] == (1.0, 1.0, 1.0) and
+                            tex_map[3] == (False, False)):
+                        use_mapping = False
+                    else:
+                        use_mapping = True
+                        tex_map_kw = {
+                            "translation": tex_map[0],
+                            "rotation": [-i for i in tex_map[1]],
+                            "scale": [((1.0 / i) if i != 0.0 else 1.0) for i in tex_map[2]],
+                            "clamp": tex_map[3],
+                            }
+
+                    if lnk_type in {b'DiffuseColor', b'3dsMax|maps|texmap_diffuse'}:
+                        ma_wrap.diffuse_image_set(image)
+                        if use_mapping:
+                            ma_wrap.diffuse_mapping_set(**tex_map_kw)
+                    elif lnk_type == b'SpecularColor':
+                        ma_wrap.specular_image_set(image)
+                        if use_mapping:
+                            ma_wrap.specular_mapping_set(**tex_map_kw)
+                    elif lnk_type in {b'ReflectionColor', b'3dsMax|maps|texmap_reflection'}:
+                        ma_wrap.reflect_image_set(image)
+                        if use_mapping:
+                            ma_wrap.reflect_mapping_set(**tex_map_kw)
+                    elif lnk_type == b'TransparentColor':  # alpha
+                        ma_wrap.alpha_image_set(image)
+                        if use_mapping:
+                            ma_wrap.alpha_mapping_set(**tex_map_kw)
+                        if use_alpha_decals:
+                            material_decals.add(material)
+                    elif lnk_type == b'DiffuseFactor':
+                        pass  # TODO
+                    elif lnk_type == b'ShininessExponent':
+                        ma_wrap.hardness_image_set(image)
+                        if use_mapping:
+                            ma_wrap.hardness_mapping_set(**tex_map_kw)
+                    # XXX, applications abuse bump!
+                    elif lnk_type in {b'NormalMap', b'Bump', b'3dsMax|maps|texmap_bump'}:
+                        ma_wrap.normal_image_set(image)
+                        ma_wrap.normal_factor_set(texture_bumpfac_get(fbx_obj))
+                        if use_mapping:
+                            ma_wrap.normal_mapping_set(**tex_map_kw)
+                        """
+                    elif lnk_type == b'Bump':
+                        ma_wrap.bump_image_set(image)
+                        ma_wrap.bump_factor_set(texture_bumpfac_get(fbx_obj))
+                        if use_mapping:
+                            ma_wrap.bump_mapping_set(**tex_map_kw)
+                        """
+                    else:
+                        print("WARNING: material link %r ignored" % lnk_type)
+
+                    material_images.setdefault(material, {})[lnk_type] = (image, tex_map)
+
+                else:
+                    tex_map = fbx_lnk[3][1]
+                    lnk_type = fbx_lnk[3][0]
+                    mtex = material_mtex_new(material, image, tex_map)
+                    
+                    if lnk_type in {b'DiffuseColor', b'3dsMax|maps|texmap_diffuse'}:
+                        mtex.use_map_color_diffuse = True
+                        mtex.blend_type = 'MULTIPLY'
+                    elif lnk_type == b'SpecularColor':
+                        mtex.use_map_color_spec = True
+                        mtex.blend_type = 'MULTIPLY'
+                    elif lnk_type in {b'ReflectionColor', b'3dsMax|maps|texmap_reflection'}:
+                        mtex.use_map_raymir = True
+                    elif lnk_type == b'TransparentColor':  # alpha
+                        material.use_transparency = True
+                        material.transparency_method = 'RAYTRACE'
+                        material.alpha = 0.0
+                        mtex.use_map_alpha = True
+                        mtex.alpha_factor = 1.0
+                        if use_alpha_decals:
+                            material_decals.add(material)
+                    elif lnk_type == b'DiffuseFactor':
+                        mtex.use_map_diffuse = True
+                    elif lnk_type == b'ShininessExponent':
+                        mtex.use_map_hardness = True
+                    # XXX, applications abuse bump!
+                    elif lnk_type in {b'NormalMap', b'Bump', b'3dsMax|maps|texmap_bump'}:
+                        mtex.texture.use_normal_map = True  # not ideal!
+                        mtex.use_map_normal = True
+                        mtex.normal_factor = texture_bumpfac_get(fbx_obj)
+                        """
+                    elif lnk_type == b'Bump':
+                        mtex.use_map_normal = True
+                        mtex.normal_factor = texture_bumpfac_get(fbx_obj)
+                        """
+                    else:
+                        print("WARNING: material link %r ignored" % lnk_type)
+
+                    material_images.setdefault(material, {})[lnk_type] = (image, tex_map)
+                    
+    # Check if the diffuse image has an alpha channel,
+    # if so, use the alpha channel.
+
+    # Note: this could be made optional since images may have alpha but be entirely opaque
+    for fbx_uuid, fbx_item in fbx_table_nodes.items():
+        fbx_obj, blen_data = fbx_item
+        if fbx_obj.id != b'Material':
+            continue
+        material = fbx_table_nodes.get(fbx_uuid, (None, None))[1]
+        image, tex_map = material_images.get(material, {}).get(b'DiffuseColor', (None, None))
+        # do we have alpha?
+        if image and image.depth == 32:
+            if use_alpha_decals:
+                material_decals.add(material)
+
+            if use_cycles:
+                ma_wrap = cycles_material_wrap_map[material]
+                if ma_wrap.node_bsdf_alpha.mute:
+                    ma_wrap.alpha_image_set_from_diffuse()
+            else:
+                if not any((True for mtex in material.texture_slots if mtex and mtex.use_map_alpha)):
+                    mtex = material_mtex_new(material, image, tex_map)
+
+                    material.use_transparency = True
+                    material.transparency_method = 'RAYTRACE'
+                    material.alpha = 0.0
+                    mtex.use_map_alpha = True
+                    mtex.alpha_factor = 1.0
+
+        # propagate mapping from diffuse to all other channels which have none defined.
+        if use_cycles:
+            ma_wrap = cycles_material_wrap_map[material]
+            ma_wrap.mapping_set_from_diffuse()                    
+                    
+                    
+                    
+                    
 
     return {'FINISHED'}
     

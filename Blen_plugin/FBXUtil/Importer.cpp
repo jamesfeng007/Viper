@@ -14,6 +14,13 @@ Importer::Importer()
 	mConnections.clear();
 }
 
+Importer::~Importer()
+{
+	std::cout.rdbuf(mCoutbuf); //reset to standard output again
+	mLogFile.flush();
+	mLogFile.close();
+}
+
 bool Importer::Import(char* filePath)
 {
 	FbxManager* lSdkManager = NULL;
@@ -47,10 +54,6 @@ bool Importer::Import(char* filePath)
 
 	// Destroy all objects created by the FBX SDK.
 	DestroySdkObjects(lSdkManager, lResult);
-
-	std::cout.rdbuf(mCoutbuf); //reset to standard output again
-	mLogFile.flush();
-	mLogFile.close();
 
 	return lResult;
 }
@@ -440,6 +443,28 @@ const char* Importer::GetTextureRelFileName(int index)
 	return tex.relFileName.c_str();
 }
 
+const char* Importer::GetTextureMatProp(int index)
+{
+	Texture& tex = mTextures.at(index);
+	return tex.matProp.c_str();
+}
+
+bool Importer::GetTextureMapping(int index, Vector3* pTranslation, Vector3* pRotation, Vector3* pScaling, IntVector2* pWrapMode)
+{
+	if (pTranslation == nullptr || pRotation == nullptr || pScaling == nullptr || pWrapMode == nullptr)
+	{
+		return false;
+	}
+
+	Texture& tex = mTextures.at(index);
+	pTranslation->Fill(tex.translation);
+	pRotation->Fill(tex.rotation);
+	pScaling->Fill(tex.scaling);
+	pWrapMode->Fill(IntVector2(tex.wrapModeU, tex.wrapModeV));
+
+	return true;
+}
+
 const char* Importer::GetTextureFileName(int index)
 {
 	Texture& tex = mTextures.at(index);
@@ -484,6 +509,7 @@ void Importer::AnalyzeTexture(FbxProperty& prop, FbxSurfaceMaterial* lMaterial)
 			FbxTexture* lTexture = prop.GetSrcObject<FbxTexture>(j);
 			if (lTexture)
 			{
+				mConnections.push_back(UInt64Vector2(lMaterial->GetUniqueID(), lTexture->GetUniqueID()));
 				bool exist = false;
 				Texture& tex = GetTexture(lTexture->GetUniqueID(), exist);
 				tex.parentMat.push_back(std::string(lMaterial->GetName()));
@@ -492,6 +518,7 @@ void Importer::AnalyzeTexture(FbxProperty& prop, FbxSurfaceMaterial* lMaterial)
 					tex.name = lTexture->GetName();
 					tex.scaling = Vector3(lTexture->GetScaleU(), lTexture->GetScaleV(), 0.0);
 					tex.translation = Vector3(lTexture->GetTranslationU(), lTexture->GetTranslationV(), 0.0);
+					tex.rotation = Vector3(lTexture->GetRotationU(), lTexture->GetRotationV(), lTexture->GetRotationW());
 					tex.alphaSource = lTexture->GetAlphaSource();
 					tex.currentMappingType = lTexture->GetMappingType();
 					tex.premultiplyAlpha = lTexture->GetPremultiplyAlpha();
@@ -525,6 +552,7 @@ void Importer::AnalyzeMaterial(FbxNode* pNode)
 		FbxSurfaceMaterial* lMaterial = pNode->GetMaterial(i);
 		if (lMaterial != nullptr)
 		{
+			mConnections.push_back(UInt64Vector2(pNode->GetUniqueID(), lMaterial->GetUniqueID()));
 			if (lMaterial->GetClassId().Is(FbxSurfacePhong::ClassId))
 			{
 				Material material = Material();
@@ -557,7 +585,6 @@ void Importer::AnalyzeMesh(FbxNode* pNode)
 
 	mConnections.push_back(UInt64Vector2(pNode->GetUniqueID(), lMesh->GetUniqueID()));
 
-	std::cout << "Mesh Name: " << lMesh->GetName() << std::endl;
 	Mesh mesh(lMesh->GetName());
 	mesh.uuid = lMesh->GetUniqueID();
 
@@ -847,6 +874,14 @@ void Importer::AnalyzeGlobalSettings(FbxGlobalSettings* pGlobalSettings)
 
 }
 
+void Importer::PrintNode()
+{
+	for (const Node& _node : mModels)
+	{
+		FBXUtil::PrintNode(_node);
+	}
+}
+
 void Importer::PrintMesh()
 {
 	for (const Mesh& _mesh : mMesh)
@@ -911,6 +946,9 @@ extern "C"
 	DLLEXPORT const char* Importer_GetTextureName(Importer* importer, int index) { return importer->GetTextureName(index); }
 	DLLEXPORT const char* Importer_GetTextureRelFileName(Importer* importer, int index) { return importer->GetTextureRelFileName(index); }
 	DLLEXPORT const char* Importer_GetTextureFileName(Importer* importer, int index) { return importer->GetTextureFileName(index); }
+	DLLEXPORT const char* Importer_GetTextureMatProp(Importer* importer, int index) { return importer->GetTextureMatProp(index); }
+	DLLEXPORT bool Importer_GetTextureMapping(Importer* importer, int index, Vector3* pTranslation, Vector3* pRotation, Vector3* pScaling, IntVector2* pWrapMode) { return importer->GetTextureMapping(index, pTranslation, pRotation, pScaling, pWrapMode); }
 
 	DLLEXPORT void Importer_PrintMesh(Importer* importer) { importer->PrintMesh(); }
+	DLLEXPORT void Importer_PrintNode(Importer* importer) { importer->PrintNode(); }
 }

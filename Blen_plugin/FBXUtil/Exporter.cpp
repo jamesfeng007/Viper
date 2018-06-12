@@ -890,11 +890,21 @@ void Exporter::PrintSkeleton()
 	}
 }
 
+void Exporter::PrintMeshProps(const Mesh& mesh)
+{
+	std::cout << "mesh translation: " << mesh.lclTranslation << " rotation: " << mesh.lclRotation << " scale: " << mesh.lclScaling << std::endl;
+	std::cout << "mesh GeometricTranslation: " << mesh.GeometricTranslation << " GeometricRotation: " << mesh.GeometricRotation << " GeometricScaling: " << mesh.GeometricScaling << std::endl;
+	std::cout << "mesh RotationOffset: " << mesh.RotationOffset << " RotationPivot: " << mesh.RotationPivot << " ScalingOffset: " << mesh.ScalingOffset << std::endl;
+	std::cout << "mesh ScalingPivot: " << mesh.ScalingPivot << " PreRotation: " << mesh.PreRotation << " PostRotation: " << mesh.PostRotation << std::endl;
+	std::cout << "mesh RotationOrder: " << mesh.RotationOrder << " RotationActive: " << mesh.RotationActive << std::endl;
+}
+
 void Exporter::PrintMesh()
 {
 	for (std::pair<std::string, Mesh> _mesh : mMesh)
 	{
 		FBXUtil::PrintMesh(_mesh.second);
+		PrintMeshProps(_mesh.second);
 	}
 
 	for (const Material& mat : mMaterials)

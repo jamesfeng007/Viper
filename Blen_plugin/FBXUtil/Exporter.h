@@ -52,6 +52,7 @@ public:
 
 	void SetAsASCII(bool asAscii) { mAsASCII = asAscii; }
 
+	void PrintMeshProps(const Mesh& mesh);
 	void PrintMesh();
 	void PrintSkeleton();
 	void PrintTakes();

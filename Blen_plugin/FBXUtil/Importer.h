@@ -17,6 +17,7 @@ class Importer
 {
 public:
 	Importer();
+	~Importer();
 
 	bool Import(char* name);
 	bool GetGlobalSettings(GlobalSettings* globalSettings);
@@ -61,8 +62,11 @@ public:
 	const char* GetTextureName(int index);
 	const char* GetTextureFileName(int index);
 	const char* GetTextureRelFileName(int index);
+	const char* GetTextureMatProp(int index);
+	bool GetTextureMapping(int index, Vector3* pTranslation, Vector3* pRotation, Vector3* pScaling, IntVector2* pWrapMode);
 
 	void PrintMesh();
+	void PrintNode();
 
 private:
 	void AnalyzeContent(FbxScene* pScene);
@@ -85,5 +89,5 @@ private:
 	std::vector<Mesh> mMesh;
 	std::vector<Material> mMaterials;
 	std::vector<Texture> mTextures;
-	std::vector<UInt64Vector2> mConnections;
+	std::vector<UInt64Vector2> mConnections; //(parent, child)
 };

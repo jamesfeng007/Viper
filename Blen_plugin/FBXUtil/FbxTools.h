@@ -22,6 +22,12 @@ namespace FBXUtil
 
 		}
 
+		void Fill(Vector2<T> _val)
+		{
+			x = _val.x;
+			y = _val.y;
+		}
+
 		T x, y;
 	};
 
@@ -39,6 +45,13 @@ namespace FBXUtil
 			:x(_x), y(_y), z(_z)
 		{
 
+		}
+
+		void Fill(Vector3 _val)
+		{
+			x = _val.x;
+			y = _val.y;
+			z = _val.z;
 		}
 
 		double x, y, z;
@@ -231,6 +244,7 @@ namespace FBXUtil
 		int wrapModeV;
 		Vector3 translation;
 		Vector3 scaling;
+		Vector3 rotation;
 		bool useMaterial;
 		bool useMipMap;
 		std::vector<std::string> parentMat;
@@ -467,6 +481,7 @@ namespace FBXUtil
 
 	Mesh& GetMesh(char* name, std::map<std::string, Mesh>& meshLoader);
 	LayerElementUVInfo& GetUVInfo(int uvIndex, const char* name, Mesh& mesh);
+	void PrintNode(const Node& node);
 	void PrintMesh(const Mesh& mesh);
 	void PrintMaterial(const Material& mat);
 	void PrintTexture(const Texture& tex);
