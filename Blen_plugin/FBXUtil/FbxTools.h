@@ -73,11 +73,16 @@ namespace FBXUtil
 		double x, y, z, w;
 	};
 
-	struct Node
+	struct Attribute
+	{
+		FbxUInt64 uuid;
+	};
+
+	struct Node : Attribute
 	{
 		Node()
 		{
-
+			isBone = false;
 		}
 
 		Node(FbxUInt64 _uuid, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
@@ -97,7 +102,7 @@ namespace FBXUtil
 
 		}
 
-		FbxUInt64 uuid;
+		
 		std::string nodeName;
 		Vector3 lclTranslation;
 		Vector3 lclRotation;
@@ -113,6 +118,7 @@ namespace FBXUtil
 		Vector3 PostRotation;
 		int RotationOrder;
 		bool RotationActive;
+		bool isBone;
 	};
 
 	struct Mat4x4
@@ -132,6 +138,37 @@ namespace FBXUtil
 			w0(_w0), w1(_w1), w2(_w2), w3(_w3)
 		{
 
+		}
+
+		Mat4x4(FbxDouble4 r0, FbxDouble4 r1, FbxDouble4 r2, FbxDouble4 r3)
+			: Mat4x4(r0[0], r0[1], r0[2], r0[3], 
+							r1[0], r1[1], r1[2], r1[3], 
+							r2[0], r2[1], r2[2], r2[3], 
+							r3[0], r3[1], r3[2], r3[3])
+		{
+
+		}
+
+		int Size() { return 16; }
+
+		void Fill(Mat4x4& pM)
+		{
+			x0 = pM.x0;
+			x1 = pM.x1;
+			x2 = pM.x2;
+			x3 = pM.x3;
+			y0 = pM.y0;
+			y1 = pM.y1;
+			y2 = pM.y2;
+			y3 = pM.y3;
+			z0 = pM.z0;
+			z1 = pM.z1;
+			z2 = pM.z2;
+			z3 = pM.z3;
+			w0 = pM.w0;
+			w1 = pM.w1;
+			w2 = pM.w2;
+			w3 = pM.w3;
 		}
 
 		double x0, x1, x2, x3;
@@ -164,14 +201,14 @@ namespace FBXUtil
 		char RefType[32];
 	};
 
-	struct Pose
+	struct PoseNode
 	{
-		Pose()
+		PoseNode()
 		{
 
 		}
 
-		Pose(const char* name, Mat4x4 mat)
+		PoseNode(const char* name, Mat4x4 mat)
 			: poseNodeName(std::string(name)), poseTransform(mat)
 		{
 
@@ -179,6 +216,7 @@ namespace FBXUtil
 
 		std::string poseNodeName;
 		Mat4x4 poseTransform;
+		FbxUInt64 refNodeUuid;
 	};
 
 	struct UV
@@ -217,7 +255,7 @@ namespace FBXUtil
 		std::vector<int> mUVIndices;
 	};
 
-	struct Texture : Node
+	struct Texture : Attribute
 	{
 		Texture()
 		{
@@ -251,7 +289,7 @@ namespace FBXUtil
 		std::string matProp;
 	};
 
-	struct Material : Node
+	struct Material : Attribute
 	{
 		Material()
 		{
@@ -318,14 +356,20 @@ namespace FBXUtil
 		std::string tangentName;
 	};
 
-	struct Bone
+	struct Bone : Attribute
 	{
 		Bone()
 		{
 			parentName.clear();
 		}
 
-		Bone(char* name, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
+		Bone(const char* name)
+			: Bone()
+		{
+			boneName = std::string(name);
+		}
+
+		Bone(const char* name, Vector3 _lclTranslation, Vector3 _lclRotation, Vector3 _lclScaling)
 			: Bone()
 		{
 			boneName = std::string(name);
@@ -341,7 +385,7 @@ namespace FBXUtil
 		std::string parentName;
 	};
 
-	struct SubDeformer
+	struct SubDeformer : Attribute
 	{
 		SubDeformer()
 		{
@@ -360,6 +404,7 @@ namespace FBXUtil
 		std::string subDeformerName;
 		std::string meshName;
 		std::string boneName;
+		FbxUInt64 linkBoneUuid;
 		std::vector<int> indexes;
 		std::vector<double> weights;
 		Mat4x4 transform;
@@ -367,7 +412,7 @@ namespace FBXUtil
 		Vector4 quat;
 	};
 
-	struct Deformer
+	struct Deformer : Attribute
 	{
 		Deformer()
 		{
@@ -485,5 +530,8 @@ namespace FBXUtil
 	void PrintMesh(const Mesh& mesh);
 	void PrintMaterial(const Material& mat);
 	void PrintTexture(const Texture& tex);
+	void PrintBone(const Bone& bone);
+	void PrintPoseNode(const PoseNode& node);
+	void PrintSubDeformer(const SubDeformer& subDeformer);
 }
 

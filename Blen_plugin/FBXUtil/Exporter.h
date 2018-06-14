@@ -82,7 +82,7 @@ private:
 	 std::vector<Material> mMaterials;
 	 std::map<std::string, Bone> mBones;
 	 std::map<std::string, Deformer> mDeformers;
-	 std::map<std::string, Pose> mPoses;
+	 std::map<std::string, PoseNode> mPoses;
 	 std::map<std::string, Take> mTakes;
 	 std::map<std::string, Texture> mTextures;
 	 double mFps;

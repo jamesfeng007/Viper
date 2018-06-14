@@ -10,7 +10,7 @@ Exporter::Exporter()
 	mMaterials = std::vector<Material>();
 	mBones = std::map<std::string, Bone>();
 	mDeformers = std::map<std::string, Deformer>();
-	mPoses = std::map<std::string, Pose>();
+	mPoses = std::map<std::string, PoseNode>();
 	mTakes = std::map<std::string, Take>();
 	mTextures = std::map<std::string, Texture>();
 	mCoutbuf = std::cout.rdbuf(); //save old buf
@@ -355,9 +355,9 @@ bool Exporter::BuildPose(FbxScene* pScene, FbxNode*& pMeshNode, FbxNode* pSkelet
 	FbxPose* lPose = FbxPose::Create(pScene, pMeshNode->GetName());
 	lPose->SetIsBindPose(true);
 
-	for (std::pair<std::string, Pose> _pose : mPoses)
+	for (std::pair<std::string, PoseNode> _pose : mPoses)
 	{
-		const Pose& pose = _pose.second;
+		const PoseNode& pose = _pose.second;
 		Mat4x4 transform = pose.poseTransform;
 		FbxMatrix lBindMatrix = FbxMatrix(transform.x0, transform.x1, transform.x2, transform.x3,
 			transform.y0, transform.y1, transform.y2, transform.y3,
@@ -665,7 +665,7 @@ void Exporter::AddTexture(char* name, char* fileName, char* relFileName, int alp
 
 void Exporter::AddPoseNode(char* name, Mat4x4 transform)
 {
-	mPoses.insert(make_pair(std::string(name), Pose(name, transform)));
+	mPoses.insert(make_pair(std::string(name), PoseNode(name, transform)));
 }
 
 SubDeformer& Exporter::GetSubDeformer(const char* mName, const char* bName)
@@ -847,9 +847,7 @@ void Exporter::PrintSkeleton()
 {
 	for (std::pair<std::string, Bone> _bone : mBones)
 	{
-		const Bone& bone = _bone.second;
-		std::cout << "Bone name: " << _bone.first << " translation: " << bone.lclTranslation << " rotation: " 
-			<< bone.lclRotation << " scaling: " << bone.lclScaling << " parent: " << bone.parentName << std::endl;
+		PrintBone(_bone.second);
 	}
 
 	for (std::pair<std::string, Deformer> _deformer : mDeformers)
@@ -858,35 +856,13 @@ void Exporter::PrintSkeleton()
 		std::cout << "deformer name: " << deformer.deformerName << std::endl;
 		for (std::pair<std::string, SubDeformer> _subDeformer : deformer.subDeformers)
 		{
-			const SubDeformer& subDeformer = _subDeformer.second;
-			std::cout << "subdeformer name: " << subDeformer.subDeformerName << std::endl;
-
-			std::cout << "subdeformer index[ ";
-			for (int ix : subDeformer.indexes)
-			{
-				std::cout << ix << ", ";
-			}
-			std::cout << " ]" << std::endl;
-
-			std::cout << "subdeformer weight[ ";
-			for (double ix : subDeformer.weights)
-			{
-				std::cout << ix << ", ";
-			}
-			std::cout << " ]" << std::endl;
-
-			std::cout << "transform:" << std::endl;
-			std::cout << subDeformer.transform << std::endl;
-			std::cout << "transformLink:" << std::endl;
-			std::cout << subDeformer.transformLink << std::endl;
+			PrintSubDeformer(_subDeformer.second);
 		}
 	}
 
-	for (std::pair<std::string, Pose> _pose : mPoses)
+	for (std::pair<std::string, PoseNode> _pose : mPoses)
 	{
-		const Pose& pose = _pose.second;
-		std::cout << "pose node name: " << pose.poseNodeName << " transform:" << std::endl
-			<< pose.poseTransform << std::endl;
+		PrintPoseNode(_pose.second);
 	}
 }
 

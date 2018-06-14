@@ -29,6 +29,7 @@ public:
 	int GetModelCount() { return static_cast<int>(mModels.size()); }
 	bool GetModelTransformProp(int index, ObjectTransformProp* prop);
 	const char* GetModelName(int index) { return mModels.at(index).nodeName.c_str(); }
+	bool IsModelBone(int index) { return mModels.at(index).isBone; }
 
 	int GetMeshCount() { return static_cast<int>(mMesh.size()); }
 	FbxUInt64 GetMeshUUID(int index);
@@ -65,16 +66,36 @@ public:
 	const char* GetTextureMatProp(int index);
 	bool GetTextureMapping(int index, Vector3* pTranslation, Vector3* pRotation, Vector3* pScaling, IntVector2* pWrapMode);
 
+	int GetBoneCount() { return static_cast<int>(mBones.size()); }
+	FbxUInt64 GetBoneUUID(int index);
+	const char* GetBoneName(int index);
+	int GetPoseCount() { return static_cast<int>(mPoses.size()); }
+	FbxUInt64 GetRefBoneUUID(int index);
+	bool GetPoseMatrix(int index, double* pV, int matSize);
+	int GetClusterCount() { return static_cast<int>(mSubDeformers.size()); }
+	FbxUInt64 GetClusterUUID(int index);
+	int GetClusterIndiceSize(int index);
+	const char* GetClusterName(int index);
+	bool GetClusterWeightIndice(int index, int* pIndice, double* pWeight, long indiceSize);
+	bool GetClusterTransforms(int index, double* pTransform, double* pLinkTransform, int matSize);
+	int GetSkinCount() { return static_cast<int>(mDeformers.size()); }
+	FbxUInt64 GetSkinUUID(int index);
+	const char* GetSkinName(int index);
+
 	void PrintMesh();
 	void PrintNode();
+	void PrintSkeleton();
 
 private:
+	void AnalyzeGlobalSettings(FbxGlobalSettings* pGlobalSettings);
 	void AnalyzeContent(FbxScene* pScene);
 	void AnalyzeContent(FbxNode* pScene);
 	void AnalyzeMesh(FbxNode* pNode);
+	void AnalyzeLink(FbxGeometry* pGeometry);
 	void AnalyzeMaterial(FbxNode* pNode);
 	void AnalyzeTexture(FbxProperty& prop, FbxSurfaceMaterial* lMaterial);
-	void AnalyzeGlobalSettings(FbxGlobalSettings* pGlobalSettings);
+	void AnalyzeBone(FbxNode* pNode);
+	void AnalyzePose(FbxScene* pScene);
 
 	
 
@@ -90,4 +111,8 @@ private:
 	std::vector<Material> mMaterials;
 	std::vector<Texture> mTextures;
 	std::vector<UInt64Vector2> mConnections; //(parent, child)
+	std::vector<Bone> mBones;
+	std::vector<PoseNode> mPoses;
+	std::vector<SubDeformer> mSubDeformers;
+	std::vector<Deformer> mDeformers;
 };

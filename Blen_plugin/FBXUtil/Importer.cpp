@@ -12,6 +12,10 @@ Importer::Importer()
 	mMaterials.clear();
 	mTextures.clear();
 	mConnections.clear();
+	mBones.clear();
+	mPoses.clear();
+	mSubDeformers.clear();
+	mDeformers.clear();
 }
 
 Importer::~Importer()
@@ -49,6 +53,7 @@ bool Importer::Import(char* filePath)
 	{
 		AnalyzeGlobalSettings(&lScene->GetGlobalSettings());
 		AnalyzeContent(lScene);
+		AnalyzePose(lScene);
 	}
 
 
@@ -431,6 +436,109 @@ bool Importer::GetMaterialProps(int index, Vector3* pEmissive, Vector3* pAmbient
 	return true;
 }
 
+FbxUInt64 Importer::GetRefBoneUUID(int index)
+{
+	PoseNode& node = mPoses.at(index);
+	return node.refNodeUuid;
+}
+
+bool Importer::GetClusterTransforms(int index, double* pTransform, double* pLinkTransform, int matSize)
+{
+	if (pTransform == nullptr || pLinkTransform == nullptr)
+	{
+		return false;
+	}
+
+	Mat4x4& mat = mSubDeformers.at(index).transform;
+	if (matSize < mat.Size())
+	{
+		return false;
+	}
+
+	Mat4x4* pMat = reinterpret_cast<Mat4x4*>(pTransform);
+
+	pMat->Fill(mat);
+
+	mat = mSubDeformers.at(index).transformLink;
+	if (matSize < mat.Size())
+	{
+		return false;
+	}
+
+	pMat = reinterpret_cast<Mat4x4*>(pLinkTransform);
+
+	pMat->Fill(mat);
+
+	return true;
+}
+
+bool Importer::GetPoseMatrix(int index, double* pV, int matSize)
+{
+	if (pV == nullptr)
+	{
+		return false;
+	}
+
+	Mat4x4& mat = mPoses.at(index).poseTransform;
+	if (matSize < mat.Size())
+	{
+		return false;
+	}
+
+	Mat4x4* pMat = reinterpret_cast<Mat4x4*>(pV);
+
+	pMat->Fill(mat);
+
+	return true;
+}
+
+bool Importer::GetClusterWeightIndice(int index, int* pIndice, double* pWeight, long indiceSize)
+{
+	if (pIndice == nullptr || pWeight == nullptr)
+	{
+		return false;
+	}
+
+	std::vector<int>& indices = mSubDeformers.at(index).indexes;
+	std::vector<double> weights = mSubDeformers.at(index).weights;
+	if (indiceSize < indices.size() || weights.size() != indices.size())
+	{
+		return false;
+	}
+
+	for (int i = 0; i < indices.size(); ++i)
+	{
+		pIndice[i] = indices.at(i);
+		pWeight[i] = weights.at(i);
+	}
+
+	return true;
+}
+
+int Importer::GetClusterIndiceSize(int index)
+{
+	SubDeformer& cluster = mSubDeformers.at(index);
+	return static_cast<int>(cluster.indexes.size());
+}
+
+FbxUInt64 Importer::GetSkinUUID(int index)
+{
+	Deformer& skin = mDeformers.at(index);
+	return skin.uuid;
+}
+
+FbxUInt64 Importer::GetClusterUUID(int index)
+{
+	SubDeformer& cluster = mSubDeformers.at(index);
+	return cluster.uuid;
+}
+
+FbxUInt64 Importer::GetBoneUUID(int index)
+{
+	Bone& bone = mBones.at(index);
+	return bone.uuid;
+}
+
 FbxUInt64 Importer::GetTextureUUID(int index)
 {
 	Texture& tex = mTextures.at(index);
@@ -475,6 +583,24 @@ const char* Importer::GetTextureName(int index)
 {
 	Texture& tex = mTextures.at(index);
 	return tex.name.c_str();
+}
+
+const char* Importer::GetBoneName(int index)
+{
+	Bone& bone = mBones.at(index);
+	return bone.boneName.c_str();
+}
+
+const char* Importer::GetSkinName(int index)
+{
+	Deformer& skin = mDeformers.at(index);
+	return skin.deformerName.c_str();
+}
+
+const char* Importer::GetClusterName(int index)
+{
+	SubDeformer& cluster = mSubDeformers.at(index);
+	return cluster.subDeformerName.c_str();
 }
 
 FbxUInt64 Importer::GetMaterialUUID(int index)
@@ -574,6 +700,56 @@ void Importer::AnalyzeMaterial(FbxNode* pNode)
 			{
 				lProperty = lMaterial->FindProperty(FbxLayerElement::sTextureChannelNames[lTextureIndex]);
 				AnalyzeTexture(lProperty, lMaterial);
+			}
+		}
+	}
+}
+
+void Importer::AnalyzeLink(FbxGeometry* pGeometry)
+{
+	int lSkinCount = pGeometry->GetDeformerCount(FbxDeformer::eSkin);
+	for (int i = 0; i != lSkinCount; ++i)
+	{
+		FbxSkin* lSkin = (FbxSkin*)(pGeometry->GetDeformer(i, FbxDeformer::eSkin));
+		if (lSkin != nullptr)
+		{
+			Deformer deformer;
+			deformer.deformerName = lSkin->GetName();
+			deformer.uuid = lSkin->GetUniqueID();
+			mDeformers.push_back(deformer);
+			mConnections.push_back(UInt64Vector2(pGeometry->GetUniqueID(), lSkin->GetUniqueID()));
+			int lClusterCount = lSkin->GetClusterCount();
+			for (int j = 0; j != lClusterCount; ++j)
+			{
+				FbxCluster* lCluster = lSkin->GetCluster(j);
+				SubDeformer subDeformer;
+				if (lCluster != nullptr)
+				{
+					if (lCluster->GetLinkMode() == FbxCluster::eTotalOne)
+					{
+						mConnections.push_back(UInt64Vector2(lSkin->GetUniqueID(), lCluster->GetUniqueID()));
+						int lIndexCount = lCluster->GetControlPointIndicesCount();
+						int* lIndices = lCluster->GetControlPointIndices();
+						double* lWeights = lCluster->GetControlPointWeights();
+						for (int k = 0; k < lIndexCount; ++k)
+						{
+							subDeformer.indexes.push_back(lIndices[k]);
+							subDeformer.weights.push_back(lWeights[k]);
+						}
+
+						FbxAMatrix lMatrix;
+						lCluster->GetTransformMatrix(lMatrix);
+						subDeformer.transform = Mat4x4(lMatrix.GetRow(0), lMatrix.GetRow(1), lMatrix.GetRow(2), lMatrix.GetRow(3));
+						lCluster->GetTransformLinkMatrix(lMatrix);
+						subDeformer.transformLink = Mat4x4(lMatrix.GetRow(0), lMatrix.GetRow(1), lMatrix.GetRow(2), lMatrix.GetRow(3));
+						subDeformer.linkBoneUuid = lCluster->GetLink()->GetUniqueID();
+						subDeformer.subDeformerName = std::string(lCluster->GetName());
+						subDeformer.uuid = lCluster->GetUniqueID();
+
+						mSubDeformers.push_back(subDeformer);
+						mConnections.push_back(UInt64Vector2(lCluster->GetUniqueID(), lCluster->GetLink()->GetUniqueID()));
+					}
+				}
 			}
 		}
 	}
@@ -742,6 +918,20 @@ void Importer::AnalyzeMesh(FbxNode* pNode)
 	}
 	
 	mMesh.push_back(mesh);
+
+	AnalyzeLink(lMesh);
+}
+
+void Importer::AnalyzeBone(FbxNode* pNode)
+{
+	FbxSkeleton* lSkeleton = (FbxSkeleton*)pNode->GetNodeAttribute();
+	if (lSkeleton->GetSkeletonType() == FbxSkeleton::eLimbNode)
+	{
+		mConnections.push_back(UInt64Vector2(pNode->GetUniqueID(), lSkeleton->GetUniqueID()));
+		Bone bone(lSkeleton->GetName());
+		bone.uuid = lSkeleton->GetUniqueID();
+		mBones.push_back(bone);
+	}
 }
 
 void Importer::AnalyzeContent(FbxNode* pNode)
@@ -762,8 +952,6 @@ void Importer::AnalyzeContent(FbxNode* pNode)
 	node.RotationOrder = pNode->RotationOrder.Get();
 	node.RotationActive = pNode->RotationActive.Get();
 
-	mModels.push_back(node);
-
 	if (pNode->GetNodeAttribute() == NULL)
 	{
 		std::cout << "NULL Node Attribute" << std::endl;
@@ -778,15 +966,45 @@ void Importer::AnalyzeContent(FbxNode* pNode)
 			AnalyzeMesh(pNode);
 			AnalyzeMaterial(pNode);
 			break;
+		case FbxNodeAttribute::eSkeleton:
+			AnalyzeBone(pNode);
+			node.isBone = true;
+			break;
 		default:
 			break;
 		}
 	}
 
+	mModels.push_back(node);
+
 	for (int i = 0; i < pNode->GetChildCount(); i++)
 	{
 		mConnections.push_back(UInt64Vector2(pNode->GetUniqueID(), pNode->GetChild(i)->GetUniqueID()));
 		AnalyzeContent(pNode->GetChild(i));
+	}
+}
+
+void Importer::AnalyzePose(FbxScene* pScene)
+{
+	int lPoseCount = pScene->GetPoseCount();
+	for (int i = 0; i < lPoseCount; ++i)
+	{
+		FbxPose* lPose = pScene->GetPose(i);
+		if (lPose->IsBindPose())
+		{
+			for (int j = 0; j < lPose->GetCount(); ++j)
+			{
+				const FbxMatrix& mat = lPose->GetMatrix(j);
+				PoseNode pose(lPose->GetNodeName(j).GetCurrentName(), Mat4x4(mat.GetRow(0), mat.GetRow(1), mat.GetRow(2), mat.GetRow(3)));
+				FbxNode* node = lPose->GetNode(j);
+				if (node != nullptr)
+				{
+					pose.refNodeUuid = node->GetUniqueID();
+				}
+				mPoses.push_back(pose);
+			}
+		}
+		
 	}
 }
 
@@ -901,6 +1119,24 @@ void Importer::PrintMesh()
 	}
 }
 
+void Importer::PrintSkeleton()
+{
+	for (const Bone& _bone : mBones)
+	{
+		PrintBone(_bone);
+	}
+
+	for (const PoseNode& _pose : mPoses)
+	{
+		PrintPoseNode(_pose);
+	}
+
+	for (const SubDeformer& _subDeformer : mSubDeformers)
+	{
+		PrintSubDeformer(_subDeformer);
+	}
+}
+
 extern "C"
 {
 	DLLEXPORT Importer* Importer_New() { return new Importer(); }
@@ -914,6 +1150,7 @@ extern "C"
 	DLLEXPORT bool Importer_GetModelTransformProp(Importer* importer, int index, ObjectTransformProp* prop) { return importer->GetModelTransformProp(index, prop); }
 	DLLEXPORT FbxUInt64 Importer_GetModelUUID(Importer* importer, int index) { return importer->GetModelUUID(index); }
 	DLLEXPORT const char* Importer_GetModelName(Importer* importer, int index) { return importer->GetModelName(index); }
+	DLLEXPORT bool Importer_IsModelBone(Importer* importer, int index) { return importer->IsModelBone(index); }
 
 	DLLEXPORT FbxUInt64 Importer_GetMeshUUID(Importer* importer, int index) { return importer->GetMeshUUID(index); }
 	DLLEXPORT const char* Importer_GetMeshName(Importer* importer, int index) { return importer->GetMeshName(index); }
@@ -949,6 +1186,23 @@ extern "C"
 	DLLEXPORT const char* Importer_GetTextureMatProp(Importer* importer, int index) { return importer->GetTextureMatProp(index); }
 	DLLEXPORT bool Importer_GetTextureMapping(Importer* importer, int index, Vector3* pTranslation, Vector3* pRotation, Vector3* pScaling, IntVector2* pWrapMode) { return importer->GetTextureMapping(index, pTranslation, pRotation, pScaling, pWrapMode); }
 
+	DLLEXPORT int Importer_GetBoneCount(Importer* importer) { return importer->GetBoneCount(); }
+	DLLEXPORT FbxUInt64 Importer_GetBoneUUID(Importer* importer, int index) { return importer->GetBoneUUID(index); }
+	DLLEXPORT const char* Importer_GetBoneName(Importer* importer, int index) { return importer->GetBoneName(index); }
+	DLLEXPORT int Importer_GetPoseCount(Importer* importer) { return importer->GetPoseCount(); }
+	DLLEXPORT FbxUInt64 Importer_GetRefBoneUUID(Importer* importer, int index) { return importer->GetRefBoneUUID(index); }
+	DLLEXPORT bool Importer_GetPoseMatrix(Importer* importer, int index, double* pV, int matSize) { return importer->GetPoseMatrix(index, pV, matSize); }
+	DLLEXPORT int Importer_GetClusterCount(Importer* importer) { return importer->GetClusterCount(); }
+	DLLEXPORT FbxUInt64 Importer_GetClusterUUID(Importer* importer, int index) { return importer->GetClusterUUID(index); }
+	DLLEXPORT const char* Importer_GetClusterName(Importer* importer, int index) { return importer->GetClusterName(index); }
+	DLLEXPORT int Importer_GetClusterIndiceSize(Importer* importer, int index) { return importer->GetClusterIndiceSize(index); }
+	DLLEXPORT bool Importer_GetClusterWeightIndice(Importer* importer, int index, int* pIndice, double* pWeight, long indiceSize) { return importer->GetClusterWeightIndice(index, pIndice, pWeight, indiceSize); }
+	DLLEXPORT bool Importer_GetClusterTransforms(Importer* importer, int index, double* pTransform, double* pLinkTransform, int matSize) { return importer->GetClusterTransforms(index, pTransform, pLinkTransform, matSize); }
+	DLLEXPORT int Importer_GetSkinCount(Importer* importer) { return importer->GetSkinCount(); }
+	DLLEXPORT FbxUInt64 Importer_GetSkinUUID(Importer* importer, int index) { return importer->GetSkinUUID(index); }
+	DLLEXPORT const char* Importer_GetSkinName(Importer* importer, int index) { return importer->GetSkinName(index); }
+
 	DLLEXPORT void Importer_PrintMesh(Importer* importer) { importer->PrintMesh(); }
 	DLLEXPORT void Importer_PrintNode(Importer* importer) { importer->PrintNode(); }
+	DLLEXPORT void Importer_PrintSkeleton(Importer* importer) { importer->PrintSkeleton(); }
 }

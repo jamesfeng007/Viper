@@ -120,6 +120,17 @@ class ImportSdkFBX(bpy.types.Operator, ImportHelper, IOFBXOrientationHelper):
             name="Import Normals",
             description="Import custom normals, if available (otherwise Blender will recompute them)",
             default=True,
+            )
+    ignore_leaf_bones = BoolProperty(
+            name="Ignore Leaf Bones",
+            description="Ignore the last bone at the end of each chain (used to mark the length of the previous bone)",
+            default=False,
+            )
+    force_connect_children = BoolProperty(
+            name="Force Connect Children",
+            description="Force connection of children bones to their parent, even if their computed head/tail "
+                        "positions do not match (can be useful with pure-joints-type armatures)",
+            default=False,
             )    
     
         
@@ -134,6 +145,8 @@ class ImportSdkFBX(bpy.types.Operator, ImportHelper, IOFBXOrientationHelper):
         layout.prop(self, "global_scale")
         layout.prop(self, "bake_space_transform")
         layout.prop(self, "use_custom_normals")
+        layout.prop(self, "ignore_leaf_bones")
+        layout.prop(self, "force_connect_children")
         
     def execute(self, context):
         keywords = self.as_keywords(ignore=("filter_glob", "directory"))

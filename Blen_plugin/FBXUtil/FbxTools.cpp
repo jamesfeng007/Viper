@@ -27,12 +27,43 @@ namespace FBXUtil
 
 	void PrintNode(const Node& node)
 	{
-		std::cout << "node name: " << node.nodeName << std::endl;
+		std::cout << "node name: " << node.nodeName << " is bone: " << node.isBone << std::endl;
 		std::cout << "node translation: " << node.lclTranslation << " rotation: " << node.lclRotation << " scale: " << node.lclScaling << std::endl;
 		std::cout << "node GeometricTranslation: " << node.GeometricTranslation << " GeometricRotation: " << node.GeometricRotation << " GeometricScaling: " << node.GeometricScaling << std::endl;
 		std::cout << "node RotationOffset: " << node.RotationOffset << " RotationPivot: " << node.RotationPivot << " ScalingOffset: " << node.ScalingOffset << std::endl;
 		std::cout << "node ScalingPivot: " << node.ScalingPivot << " PreRotation: " << node.PreRotation << " PostRotation: " << node.PostRotation << std::endl;
 		std::cout << "node RotationOrder: " << node.RotationOrder << " RotationActive: " << node.RotationActive << std::endl;
+	}
+
+	void PrintPoseNode(const PoseNode& node)
+	{
+		std::cout << "pose node name: " << node.poseNodeName <<", ref node uuid: " << node.refNodeUuid << ", transform:" << std::endl
+			<< node.poseTransform << std::endl;
+	}
+
+	void PrintSubDeformer(const SubDeformer& subDeformer)
+	{
+		std::cout << "subdeformer name: " << subDeformer.subDeformerName << " uuid: " << subDeformer.uuid << " link bone uuid: "
+			<< subDeformer.linkBoneUuid << std::endl;
+
+		std::cout << "subdeformer index[ ";
+		for (int ix : subDeformer.indexes)
+		{
+			std::cout << ix << ", ";
+		}
+		std::cout << " ]" << std::endl;
+
+		std::cout << "subdeformer weight[ ";
+		for (double ix : subDeformer.weights)
+		{
+			std::cout << ix << ", ";
+		}
+		std::cout << " ]" << std::endl;
+
+		std::cout << "transform:" << std::endl;
+		std::cout << subDeformer.transform << std::endl;
+		std::cout << "transformLink:" << std::endl;
+		std::cout << subDeformer.transformLink << std::endl;
 	}
 
 	void PrintMaterial(const Material& mat)
@@ -128,6 +159,12 @@ namespace FBXUtil
 			std::cout << ix << ", ";
 		}
 		std::cout << " ]" << std::endl;
+	}
+
+	void PrintBone(const Bone& bone)
+	{
+		std::cout << "Bone name: " << bone.boneName << " translation: " << bone.lclTranslation << " rotation: "
+			<< bone.lclRotation << " scaling: " << bone.lclScaling << " parent: " << bone.parentName << std::endl;
 	}
 
 	std::ostream& operator<< (std::ostream &os, const IntVector2& vec)
