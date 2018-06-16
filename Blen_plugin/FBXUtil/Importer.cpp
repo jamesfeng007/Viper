@@ -16,6 +16,9 @@ Importer::Importer()
 	mPoses.clear();
 	mSubDeformers.clear();
 	mDeformers.clear();
+	mAnims.clear();
+	mLayers.clear();
+	mStacks.clear();
 }
 
 Importer::~Importer()
@@ -54,6 +57,7 @@ bool Importer::Import(char* filePath)
 		AnalyzeGlobalSettings(&lScene->GetGlobalSettings());
 		AnalyzeContent(lScene);
 		AnalyzePose(lScene);
+		AnalyzeAnimation(lScene);
 	}
 
 
@@ -413,9 +417,9 @@ const char* Importer::GetMaterialName(int index)
 	return material.materialName.c_str();
 }
 
-bool Importer::GetMaterialProps(int index, Vector3* pEmissive, Vector3* pAmbient, Vector3* pDiffuse)
+bool Importer::GetMaterialProps(int index, Vector3* pEmissive, Vector3* pAmbient, Vector3* pDiffuse, MatProps* pExtra)
 {
-	if (pEmissive == nullptr || pAmbient == nullptr || pDiffuse == nullptr)
+	if (pEmissive == nullptr || pAmbient == nullptr || pDiffuse == nullptr || pExtra == nullptr)
 	{
 		return false;
 	}
@@ -432,6 +436,8 @@ bool Importer::GetMaterialProps(int index, Vector3* pEmissive, Vector3* pAmbient
 	pDiffuse->x = material.diffuseColor[0];
 	pDiffuse->y = material.diffuseColor[1];
 	pDiffuse->z = material.diffuseColor[2];
+
+	pExtra->BumpFactor = material.extra.BumpFactor;
 
 	return true;
 }
@@ -519,6 +525,86 @@ int Importer::GetClusterIndiceSize(int index)
 {
 	SubDeformer& cluster = mSubDeformers.at(index);
 	return static_cast<int>(cluster.indexes.size());
+}
+
+const char* Importer::GetStackName(int index)
+{
+	return mStacks.at(index).refName.c_str();
+}
+
+const char* Importer::GetLayerName(FbxUInt64 uuid)
+{
+	std::vector<NameUUID>::iterator ite = std::find_if(mLayers.begin(), mLayers.end(), [uuid](const NameUUID& item) { return item.refUUID == uuid; });
+	if (ite != std::end(mLayers))
+	{
+		return (*ite).refName.c_str();
+	}
+
+	return "";
+}
+
+double Importer::GetAnimChannelDefaultValue(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel)
+{
+	double value = 0.0;
+	std::vector<ModelAnim>::iterator ite = std::find_if(mAnims.begin(), mAnims.end(), [stackUUID, layerUUID, boneUUID](const ModelAnim& anim) 
+	{ return anim.refStackUUID == stackUUID && anim.refLayerUUID == layerUUID && anim.refModelUUID == boneUUID; });
+	if (ite != std::end(mAnims) && channel < ChannelMax && channel >= T_X)
+	{
+		value = (*ite).channels[channel].defaultValue;
+	}
+
+	return value;
+}
+
+bool Importer::GetKeyTimeValue(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel, FbxLongLong* pTimes, double* pValues, int keyCount)
+{
+	if (pTimes == nullptr || pValues == nullptr)
+	{
+		return false;
+	}
+
+	std::vector<Key> keys;
+	std::vector<ModelAnim>::iterator ite = std::find_if(mAnims.begin(), mAnims.end(), [stackUUID, layerUUID, boneUUID](const ModelAnim& anim)
+	{ return anim.refStackUUID == stackUUID && anim.refLayerUUID == layerUUID && anim.refModelUUID == boneUUID; });
+	if (ite != std::end(mAnims) && channel < ChannelMax && channel >= T_X)
+	{
+		keys = (*ite).channels[channel].keys;
+	}
+
+	if (keys.size() == 0)
+	{
+		return false;
+	}
+
+	if (keyCount < keys.size())
+	{
+		return false;
+	}
+
+	for (int i = 0; i < keys.size(); ++i)
+	{
+		pTimes[i] = keys.at(i).timeValue;
+		pValues[i] = keys.at(i).value;
+	}
+
+	return true;
+}
+
+int Importer::GetKeyCount(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel)
+{
+	std::vector<ModelAnim>::iterator ite = std::find_if(mAnims.begin(), mAnims.end(), [stackUUID, layerUUID, boneUUID](const ModelAnim& anim)
+	{ return anim.refStackUUID == stackUUID && anim.refLayerUUID == layerUUID && anim.refModelUUID == boneUUID; });
+	if (ite != std::end(mAnims) && channel < ChannelMax && channel >= T_X)
+	{
+		return static_cast<int>((*ite).channels[channel].keys.size());
+	}
+
+	return 0;
+}
+
+FbxUInt64 Importer::GetStackUUID(int index)
+{
+	return mStacks.at(index).refUUID;
 }
 
 FbxUInt64 Importer::GetSkinUUID(int index)
@@ -692,6 +778,7 @@ void Importer::AnalyzeMaterial(FbxNode* pNode)
 				lString = lMaterial->ShadingModel;
 				material.shadingName = std::string(lString.Get().Buffer());
 				material.materialName = std::string(lMaterial->GetName());
+				material.extra.BumpFactor = ((FbxSurfaceLambert*)lMaterial)->BumpFactor.Get();
 				mMaterials.push_back(material);
 			}
 			
@@ -1008,6 +1095,75 @@ void Importer::AnalyzePose(FbxScene* pScene)
 	}
 }
 
+void Importer::AnalyzeAnimation(FbxScene* pScene)
+{
+	for (int i = 0; i < pScene->GetSrcObjectCount<FbxAnimStack>(); ++i)
+	{
+		FbxAnimStack* lAnimStack = pScene->GetSrcObject<FbxAnimStack>(i);
+		int nbAnimLayers = lAnimStack->GetMemberCount<FbxAnimLayer>();
+		mStacks.push_back(NameUUID(lAnimStack->GetName(), lAnimStack->GetUniqueID()));
+		for (int j = 0; j < nbAnimLayers; ++j)
+		{
+			FbxAnimLayer* lAnimLayer = lAnimStack->GetMember<FbxAnimLayer>(j);
+			mLayers.push_back(NameUUID(lAnimLayer->GetName(), lAnimLayer->GetUniqueID()));
+			mConnections.push_back(UInt64Vector2(lAnimStack->GetUniqueID(), lAnimLayer->GetUniqueID()));
+			AnalyzeAnimation(lAnimStack, lAnimLayer, pScene->GetRootNode());
+		}
+	}
+}
+
+void Importer::AnalyzeChannel(FbxAnimLayer* pAnimLayer, const char* channelName, FbxAnimCurve* pAnimCurve, FbxAnimCurveNode* pAnimCurveNode, Channel& channel)
+{
+	if (pAnimCurve && pAnimCurveNode)
+	{
+		channel.defaultValue = pAnimCurveNode->GetChannelValue(channelName, 0.0);
+		int lKeyCount = pAnimCurve->KeyGetCount();
+		for (int lCount = 0; lCount < lKeyCount; ++lCount)
+		{
+			FbxTime lKeyTime = pAnimCurve->KeyGetTime(lCount);
+			double lKeyValue = pAnimCurve->KeyGetValue(lCount);
+			channel.keys.push_back(Key(lKeyTime.Get(), lKeyValue));
+		}
+	}
+}
+
+void Importer::AnalyzeAnimation(FbxAnimStack* pAnimStack, FbxAnimLayer* pAnimLayer, FbxNode* pNode)
+{
+	ModelAnim anim;
+	anim.modelName = pNode->GetName();
+	anim.refModelUUID = pNode->GetUniqueID();
+	anim.refLayerUUID = pAnimLayer->GetUniqueID();
+	anim.refStackUUID = pAnimStack->GetUniqueID();
+
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_X, pNode->LclTranslation.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_X), 
+		pNode->LclTranslation.GetCurveNode(pAnimLayer, false), anim.channels[T_X]);
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, pNode->LclTranslation.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y),
+		pNode->LclTranslation.GetCurveNode(pAnimLayer, false), anim.channels[T_Y]);
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, pNode->LclTranslation.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z),
+		pNode->LclTranslation.GetCurveNode(pAnimLayer, false), anim.channels[T_Z]);
+
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_X, pNode->LclRotation.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_X),
+		pNode->LclRotation.GetCurveNode(pAnimLayer, false), anim.channels[R_X]);
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, pNode->LclRotation.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y),
+		pNode->LclRotation.GetCurveNode(pAnimLayer, false), anim.channels[R_Y]);
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, pNode->LclRotation.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z),
+		pNode->LclRotation.GetCurveNode(pAnimLayer, false), anim.channels[R_Z]);
+
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_X, pNode->LclScaling.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_X),
+		pNode->LclScaling.GetCurveNode(pAnimLayer, false), anim.channels[S_X]);
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, pNode->LclScaling.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y),
+		pNode->LclScaling.GetCurveNode(pAnimLayer, false), anim.channels[S_Y]);
+	AnalyzeChannel(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, pNode->LclScaling.GetCurve(pAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z),
+		pNode->LclScaling.GetCurveNode(pAnimLayer, false), anim.channels[S_Z]);
+
+	mAnims.push_back(anim);
+
+	for (int lModelCount = 0; lModelCount < pNode->GetChildCount(); ++lModelCount)
+	{
+		AnalyzeAnimation(pAnimStack, pAnimLayer, pNode->GetChild(lModelCount));
+	}
+}
+
 void Importer::AnalyzeContent(FbxScene* pScene)
 {
 	FbxNode* lNode = pScene->GetRootNode();
@@ -1137,6 +1293,14 @@ void Importer::PrintSkeleton()
 	}
 }
 
+void Importer::PrintAnimation()
+{
+	for (const ModelAnim& _anim : mAnims)
+	{
+		PrintModelAnim(_anim);
+	}
+}
+
 extern "C"
 {
 	DLLEXPORT Importer* Importer_New() { return new Importer(); }
@@ -1177,7 +1341,8 @@ extern "C"
 	DLLEXPORT int Importer_GetMaterialCount(Importer* importer) { return importer->GetMaterialCount(); }
 	DLLEXPORT FbxUInt64 Importer_GetMaterialUUID(Importer* importer, int index) { return importer->GetMaterialUUID(index); }
 	DLLEXPORT const char* Importer_GetMaterialName(Importer* importer, int index) { return importer->GetMaterialName(index); }
-	DLLEXPORT bool Importer_GetMaterialProps(Importer* importer, int index, Vector3* pEmissive, Vector3* pAmbient, Vector3* pDiffuse) { return importer->GetMaterialProps(index, pEmissive, pAmbient, pDiffuse); }
+	DLLEXPORT bool Importer_GetMaterialProps(Importer* importer, int index, Vector3* pEmissive, Vector3* pAmbient, Vector3* pDiffuse, MatProps* pExtra) 
+	{ return importer->GetMaterialProps(index, pEmissive, pAmbient, pDiffuse, pExtra); }
 	DLLEXPORT int Importer_GetTextureCount(Importer* importer) { return importer->GetTextureCount(); }
 	DLLEXPORT FbxUInt64 Importer_GetTextureUUID(Importer* importer, int index) { return importer->GetTextureUUID(index); }
 	DLLEXPORT const char* Importer_GetTextureName(Importer* importer, int index) { return importer->GetTextureName(index); }
@@ -1202,7 +1367,17 @@ extern "C"
 	DLLEXPORT FbxUInt64 Importer_GetSkinUUID(Importer* importer, int index) { return importer->GetSkinUUID(index); }
 	DLLEXPORT const char* Importer_GetSkinName(Importer* importer, int index) { return importer->GetSkinName(index); }
 
+	DLLEXPORT int Importer_GetStackCount(Importer* importer) { return importer->GetStackCount(); }
+	DLLEXPORT FbxUInt64 Importer_GetStackUUID(Importer* importer, int index) { return importer->GetStackUUID(index); }
+	DLLEXPORT double Importer_GetAnimChannelDefaultValue(Importer* importer, FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel) { return importer->GetAnimChannelDefaultValue(stackUUID, layerUUID, boneUUID, channel); }
+	DLLEXPORT const char* Importer_GetStackName(Importer* importer, int index) { return importer->GetStackName(index); }
+	DLLEXPORT const char* Importer_GetLayerName(Importer* importer, FbxUInt64 uuid) { return importer->GetLayerName(uuid); }
+	DLLEXPORT int Importer_GetKeyCount(Importer* importer, FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel) { return importer->GetKeyCount(stackUUID, layerUUID, boneUUID, channel); }
+	DLLEXPORT bool Importer_GetKeyTimeValue(Importer* importer, FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel, FbxLongLong* pTimes, double* pValues, int keyCount)
+	{ return importer->GetKeyTimeValue(stackUUID, layerUUID, boneUUID, channel, pTimes, pValues, keyCount); }
+
 	DLLEXPORT void Importer_PrintMesh(Importer* importer) { importer->PrintMesh(); }
 	DLLEXPORT void Importer_PrintNode(Importer* importer) { importer->PrintNode(); }
 	DLLEXPORT void Importer_PrintSkeleton(Importer* importer) { importer->PrintSkeleton(); }
+	DLLEXPORT void Importer_PrintAnimation(Importer* importer) { importer->PrintAnimation(); }
 }

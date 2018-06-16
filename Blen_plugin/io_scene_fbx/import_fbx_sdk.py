@@ -1,10 +1,10 @@
 import ctypes
-from ctypes import c_char_p, byref, POINTER, c_double, c_int, c_char
+from ctypes import c_char_p, byref, POINTER, c_double, c_int, c_char, c_ulonglong, c_longlong
 import array
 import bpy
 from mathutils import Matrix, Euler, Vector
 from . import fbx_utils, data_types
-from fbx_ie_lib import FBXImport, GlobalSettings, ObjectTransformProp, LayerElementInfo, Vector3, UInt64Vector2, IntVector2
+from fbx_ie_lib import FBXImport, GlobalSettings, ObjectTransformProp, LayerElementInfo, Vector3, UInt64Vector2, IntVector2, MatProps
 from collections import namedtuple
 from .fbx_utils import (
     units_blender_to_fbx_factor,
@@ -24,7 +24,7 @@ if "bpy" in locals():
 FBXImportSettings = namedtuple("FBXImportSettings", (
     "global_matrix", "global_scale", "bake_space_transform", "use_custom_normals", "global_matrix_inv_transposed", "global_matrix_inv",
     "cycles_material_wrap_map", "use_cycles", "image_cache", "use_image_search", "ignore_leaf_bones", "automatic_bone_orientation",
-    "bone_correction_matrix", "force_connect_children",
+    "bone_correction_matrix", "force_connect_children", "use_anim", "anim_offset",
 ))
 
 FBXTransformData = namedtuple("FBXTransformData", (
@@ -814,7 +814,11 @@ def blen_read_model_transform_preprocess(fbxSDKImport, model_index, rot_alt_mat,
                             sca, sca_ofs, sca_piv, geom_sca)
     
 def blen_read_geom_array_gen_allsame(data_len):
-    return zip(*(range(data_len), (0,) * data_len))    
+    return zip(*(range(data_len), (0,) * data_len))
+
+def blen_read_geom_array_error_mapping(descr, fbx_layer_mapping, quiet=False):
+    if not quiet:
+        print("warning layer %r mapping type unsupported: %r" % (descr, fbx_layer_mapping))
     
 def blen_read_geom_array_gen_direct(fbx_data, stride):
     fbx_data_len = len(fbx_data)
@@ -1169,12 +1173,13 @@ def blen_read_material(fbxSDKImport, settings, material_index):
     elem_name_utf8 = fbxSDKImport.get_material_name(material_index).decode('utf-8')
     const_color_white = 1.0, 1.0, 1.0
     cycles_material_wrap_map = settings.cycles_material_wrap_map
-    ma = bpy.data.materials.new(name=elem_name_utf8)    
+    ma = bpy.data.materials.new(name=elem_name_utf8)
     
     emissive = Vector3(0.0, 0.0, 0.0)
     ambient = Vector3(0.0, 0.0, 0.0)
     diffuse = Vector3(0.0, 0.0, 0.0)
-    fbxSDKImport.get_material_props(material_index, byref(emissive), byref(ambient), byref(diffuse))
+    extra = MatProps()
+    fbxSDKImport.get_material_props(material_index, byref(emissive), byref(ambient), byref(diffuse), byref(extra))
     
     ma_diff = [diffuse.x, diffuse.y, diffuse.z]
     ma_spec = const_color_white
@@ -1215,7 +1220,7 @@ def blen_read_material(fbxSDKImport, settings, material_index):
             ma.mirror_color = ma_refl_color
             
     fbx_obj = FBXElem(
-        b'Material', elem_name_utf8, b"Material", None
+        b'Material', elem_name_utf8, b"Material", [extra.BumpFactor]
     )
         
     return fbx_obj, ma
@@ -1366,9 +1371,60 @@ def blen_read_geom(fbxSDKImport, settings, mesh_index):
         
     return fbx_obj, mesh
 
+def blen_read_animations_curves_iter(fbx_curves, blen_start_offset, fbx_start_offset, fps):
+    """
+    Get raw FBX AnimCurve list, and yield values for all curves at each singular curves' keyframes,
+    together with (blender) timing, in frames.
+    blen_start_offset is expected in frames, while fbx_start_offset is expected in FBX ktime.
+    """
+    # As a first step, assume linear interpolation between key frames, we'll (try to!) handle more
+    # of FBX curves later.
+    from .fbx_utils import FBX_KTIME
+    timefac = fps / FBX_KTIME
+    
+    curves = tuple([0,
+                    c[2][0],
+                    c[2][1],
+                    c]
+                    for c in fbx_curves)
+    allkeys = sorted({item for sublist in curves for item in sublist[1]})
+    for curr_fbxktime in allkeys:
+        curr_values = []
+        for item in curves:
+            idx, times, values, fbx_curve = item
+            if times[idx] < curr_fbxktime:
+                if idx >= 0:
+                    idx += 1
+                    if idx >= len(times):
+                        # We have reached our last element for this curve, stay on it from now on...
+                        idx = -1
+                    item[0] = idx
+                    
+            if times[idx] >= curr_fbxktime:
+                if idx == 0:
+                    curr_values.append((values[idx], fbx_curve))
+                else:
+                    # Interpolate between this key and the previous one.
+                    ifac = (curr_fbxktime - times[idx - 1]) / (times[idx] - times[idx - 1])
+                    curr_values.append(((values[idx] - values[idx - 1]) * ifac + values[idx - 1], fbx_curve))
+                    
+        curr_blenkframe = (curr_fbxktime - fbx_start_offset) * timefac + blen_start_offset
+        yield (curr_blenkframe, curr_values)                    
+    
+    
 def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
     import os
     from bpy_extras import image_utils
+    
+    def pack_data_from_content(image):
+        pass
+        '''
+        data = elem_find_first_bytes(fbx_obj, b'Content')
+        if (data):
+            data_len = len(data)
+            if (data_len):
+                image.pack(data=data, data_len=data_len)
+        '''
     
     imagepath = None
     elem_name_utf8 = fbxSDKImport.get_texture_name(texture_index).decode('utf-8')
@@ -1398,12 +1454,13 @@ def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
         filepath = filepath.replace('\\', '/') if (os.sep == '/') else filepath.replace('/', '\\')
         imagepath = filepath
         
-    image = image_cache.get(filepath)
+    image = image_cache.get(filepath)[0] if image_cache.get(filepath) is not None else None
+    fbx_obj = image_cache.get(filepath)[1] if image_cache.get(filepath) is not None else None
     if image is not None:
         # Data is only embedded once, we may have already created the image but still be missing its data!
         if not image.has_data:
-            pack_data_from_content(image, fbx_obj)
-        return image        
+            pack_data_from_content(image)
+        return fbx_obj, image        
 
     image = image_utils.load_image(
         filepath,
@@ -1412,7 +1469,6 @@ def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
         recursive=settings.use_image_search,
         )
     
-    image_cache[filepath] = image
     # name can be ../a/b/c
     image.name = os.path.basename(elem_name_utf8)
     
@@ -1426,7 +1482,9 @@ def blen_read_texture_image(fbxSDKImport, settings, texture_index, basedir):
     fbx_obj = FBXElem(
         b'Texture', elem_name_utf8, b"Texture", (mat_prop, ((translation.x, translation.y, translation.z), (rotation.x, rotation.y, rotation.z), 
                                                  (scaling.x, scaling.y, scaling.z), (bool(wrap_mode.x), bool(wrap_mode.y))))
-    )    
+    )
+    
+    image_cache[filepath] = [image, fbx_obj]
     
     return fbx_obj, image    
     
@@ -1464,6 +1522,7 @@ def load(operator, context, filepath="",
     fbxSDKImport.print_mesh()
     fbxSDKImport.print_node()
     fbxSDKImport.print_skeleton()
+    fbxSDKImport.print_animation()
     
     if bpy.ops.object.mode_set.poll():
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -1520,7 +1579,7 @@ def load(operator, context, filepath="",
     settings = FBXImportSettings(
         global_matrix, global_scale, bake_space_transform, use_custom_normals, global_matrix_inv_transposed, global_matrix_inv,
         cycles_material_wrap_map, use_cycles, image_cache, use_image_search, ignore_leaf_bones, automatic_bone_orientation,
-        bone_correction_matrix, force_connect_children,
+        bone_correction_matrix, force_connect_children, use_anim, anim_offset,
     )
     
     fbx_helper_nodes = {}
@@ -1754,6 +1813,15 @@ def load(operator, context, filepath="",
                 
     print("FBX import: Assign textures...")
     
+    # textures that use this material
+    def texture_bumpfac_get(fbx_obj):
+        assert(fbx_obj.id == b'Material')
+        bump_factor = fbx_obj.elems[0]
+        # Do not assert, it can be None actually, sigh...
+        #~ assert(fbx_props[0] is not None)
+        # (x / 7.142) is only a guess, cycles usable range is (0.0 -> 0.5)
+        return bump_factor / 7.142    
+    
     if not use_cycles:
         # Simple function to make a new mtex and set defaults
         def material_mtex_new(material, image, tex_map):
@@ -1928,7 +1996,145 @@ def load(operator, context, filepath="",
         # propagate mapping from diffuse to all other channels which have none defined.
         if use_cycles:
             ma_wrap = cycles_material_wrap_map[material]
-            ma_wrap.mapping_set_from_diffuse()                    
+            ma_wrap.mapping_set_from_diffuse()
+            
+    print("FBX import: Assign animations...")
+    
+    from itertools import chain
+    if use_anim:
+        actions = {}
+        fps = scene.render.fps
+        stack_count = fbxSDKImport.get_stack_count()
+        for s_index in range(stack_count):
+            stack_uuid = fbxSDKImport.get_stack_uuid(s_index)
+            for c in connections:
+                c_parent = c.x
+                c_child = c.y
+                if c_parent == stack_uuid:
+                    layer_uuid = c_child
+                    
+                    stack_name = fbxSDKImport.get_stack_name(s_index).decode('utf-8')
+                    layer_name = fbxSDKImport.get_layer_name(layer_uuid).decode('utf-8')
+                        
+                    for helper_uuid, helper_node in fbx_helper_nodes.items():
+                        if not helper_node.is_bone:
+                            continue
+                        
+                        id_data = helper_node.bl_obj
+                        if id_data is None:
+                            continue
+                        
+                        # Create new action if needed (should always be needed!
+                        key = (stack_uuid, layer_uuid, id_data)
+                        action = actions.get(key)
+                        if action is None:
+                            action_name = "|".join((id_data.name, stack_name, layer_name))
+                            actions[key] = action = bpy.data.actions.new(action_name)
+                            action.use_fake_user = True
+                        # If none yet assigned, assign this action to id_data.
+                        if not id_data.animation_data:
+                            id_data.animation_data_create()
+                        if not id_data.animation_data.action:
+                            id_data.animation_data.action = action
+                            
+                        fbx_curves = []
+                        
+                        for prop_index in range(3):
+                            fbxprop = {
+                                0:b'Lcl Translation', 1:b'Lcl Rotation', 2:b'Lcl Scaling'
+                            }.get(prop_index, None)
+                            for channel_index in range(3):
+                                channel = {
+                                    b'd|X': 0, b'd|Y': 1, b'd|Z': 2
+                                }.get(channel_index, None)
+                                
+                                default_value = fbxSDKImport.get_anim_channel_default_value(stack_uuid, layer_uuid, helper_uuid, 3 * prop_index + channel_index)
+                                
+                                key_count = fbxSDKImport.get_key_count(stack_uuid, layer_uuid, helper_uuid, 3 * prop_index + channel_index)
+                                times = (c_longlong * key_count)()
+                                values = (c_double * key_count)()
+                                fbx_times = array.array('q', ())
+                                fbx_values = array.array(data_types.ARRAY_FLOAT64, ())
+                                fbxSDKImport.get_key_time_value(stack_uuid, layer_uuid, helper_uuid, 3 * prop_index + channel_index, byref(times), byref(values), key_count)
+                                for i in range(key_count):
+                                    fbx_times.append(times[i])
+                                    fbx_values.append(values[i])
+                                fbx_acdata = [fbx_times, fbx_values]
+
+                                fbx_curves.append((fbxprop, channel_index, fbx_acdata))
+                                
+                        if helper_node.is_bone:
+                            bl_obj = helper_node.bl_obj.pose.bones[helper_node.bl_bone]
+                        else:
+                            bl_obj = helper_node.bl_obj
+                        grpname = helper_node.bl_obj.name
+                        props = [(bl_obj.path_from_id("location"), 3, grpname or "Location"),
+                                 None,
+                                 (bl_obj.path_from_id("scale"), 3, grpname or "Scale")]
+                        rot_mode = bl_obj.rotation_mode
+                        if rot_mode == 'QUATERNION':
+                            props[1] = (bl_obj.path_from_id("rotation_quaternion"), 4, grpname or "Quaternion Rotation")
+                        elif rot_mode == 'AXIS_ANGLE':
+                            props[1] = (bl_obj.path_from_id("rotation_axis_angle"), 4, grpname or "Axis Angle Rotation")
+                        else:  # Euler
+                            props[1] = (bl_obj.path_from_id("rotation_euler"), 3, grpname or "Euler Rotation")
+                            
+                        blen_curves = [action.fcurves.new(prop, channel, grpname)
+                                       for prop, nbr_channels, grpname in props for channel in range(nbr_channels)]
+
+                        if helper_node.is_bone:
+                            bl_obj = helper_node.bl_obj.pose.bones[helper_node.bl_bone]
+                        else:
+                            bl_obj = helper_node.bl_obj
+                            
+                        transform_data = helper_node.fbx_transform_data
+                        rot_prev = bl_obj.rotation_euler.copy()
+                        
+                        # Pre-compute inverted local rest matrix of the bone, if relevant.
+                        restmat_inv = helper_node.get_bind_matrix().inverted_safe() if helper_node.is_bone else None
+                        
+                        for frame, values in blen_read_animations_curves_iter(fbx_curves, anim_offset, 0, fps):
+                            for v, (fbxprop, channel, _fbx_acdata) in values:
+                                if fbxprop == b'Lcl Translation':
+                                    transform_data.loc[channel] = v
+                                elif fbxprop == b'Lcl Rotation':
+                                    transform_data.rot[channel] = v
+                                elif fbxprop == b'Lcl Scaling':
+                                    transform_data.sca[channel] = v
+                            mat, _, _ = blen_read_object_transform_do(transform_data)
+                            
+                            # compensate for changes in the local matrix during processing
+                            if helper_node.anim_compensation_matrix:
+                                mat = mat * helper_node.anim_compensation_matrix
+                
+                            # apply pre- and post matrix
+                            # post-matrix will contain any correction for lights, camera and bone orientation
+                            # pre-matrix will contain any correction for a parent's correction matrix or the global matrix
+                            if helper_node.pre_matrix:
+                                mat = helper_node.pre_matrix * mat
+                            if helper_node.post_matrix:
+                                mat = mat * helper_node.post_matrix
+                
+                            # And now, remove that rest pose matrix from current mat (also in parent space).
+                            if restmat_inv:
+                                mat = restmat_inv * mat
+                
+                            # Now we have a virtual matrix of transform from AnimCurves, we can insert keyframes!
+                            loc, rot, sca = mat.decompose()
+                            if rot_mode == 'QUATERNION':
+                                pass  # nothing to do!
+                            elif rot_mode == 'AXIS_ANGLE':
+                                vec, ang = rot.to_axis_angle()
+                                rot = ang, vec.x, vec.y, vec.z
+                            else:  # Euler
+                                rot = rot.to_euler(rot_mode, rot_prev)
+                                rot_prev = rot
+                            for fc, value in zip(blen_curves, chain(loc, rot, sca)):
+                                fc.keyframe_points.insert(frame, value, {'NEEDED', 'FAST'}).interpolation = 'LINEAR'
+                                
+                        # Since we inserted our keyframes in 'FAST' mode, we have to update the fcurves now.
+                        for fc in blen_curves:
+                            fc.update()                                
                     
 
     return {'FINISHED'}

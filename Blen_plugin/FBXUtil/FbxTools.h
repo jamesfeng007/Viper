@@ -234,6 +234,11 @@ namespace FBXUtil
 		double x, y;
 	};
 
+	struct MatProps
+	{
+		double BumpFactor;
+	};
+
 	struct LayerElementUVInfo
 	{
 		LayerElementUVInfo()
@@ -309,6 +314,7 @@ namespace FBXUtil
 		FbxDouble3 emissiveColor;
 		FbxDouble3 ambientColor;
 		FbxDouble3 diffuseColor;
+		MatProps extra;
 	};
 
 	struct Mesh : Node
@@ -445,8 +451,15 @@ namespace FBXUtil
 
 		}
 
+		Key(FbxLongLong t, double v)
+			: timeValue(t), value(v)
+		{
+
+		}
+
 		double frame;
 		double value;
+		FbxLongLong timeValue;
 	};
 
 	struct Channel
@@ -488,7 +501,26 @@ namespace FBXUtil
 		}
 
 		std::string modelName;
+		FbxUInt64 refModelUUID;
+		FbxUInt64 refLayerUUID;
+		FbxUInt64 refStackUUID;
 		Channel channels[ChannelMax];
+	};
+
+	struct NameUUID
+	{
+		NameUUID()
+		{
+
+		}
+
+		NameUUID(const char* name, FbxUInt64 uuid)
+			: refName(std::string(name)), refUUID(uuid)
+		{
+
+		}
+		std::string refName;
+		FbxUInt64 refUUID;
 	};
 
 	struct Take
@@ -533,5 +565,6 @@ namespace FBXUtil
 	void PrintBone(const Bone& bone);
 	void PrintPoseNode(const PoseNode& node);
 	void PrintSubDeformer(const SubDeformer& subDeformer);
+	void PrintModelAnim(const ModelAnim& model);
 }
 

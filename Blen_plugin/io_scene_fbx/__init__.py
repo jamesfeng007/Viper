@@ -131,6 +131,16 @@ class ImportSdkFBX(bpy.types.Operator, ImportHelper, IOFBXOrientationHelper):
             description="Force connection of children bones to their parent, even if their computed head/tail "
                         "positions do not match (can be useful with pure-joints-type armatures)",
             default=False,
+            )
+    use_anim = BoolProperty(
+            name="Import Animation",
+            description="Import FBX animation",
+            default=True,
+            )
+    anim_offset = FloatProperty(
+            name="Animation Offset",
+            description="Offset to apply to animation during import, in frames",
+            default=1.0,
             )    
     
         
@@ -147,6 +157,8 @@ class ImportSdkFBX(bpy.types.Operator, ImportHelper, IOFBXOrientationHelper):
         layout.prop(self, "use_custom_normals")
         layout.prop(self, "ignore_leaf_bones")
         layout.prop(self, "force_connect_children")
+        layout.prop(self, "use_anim")
+        layout.prop(self, "anim_offset")
         
     def execute(self, context):
         keywords = self.as_keywords(ignore=("filter_glob", "directory"))

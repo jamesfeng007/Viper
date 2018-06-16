@@ -25,6 +25,54 @@ namespace FBXUtil
 		return mesh.mUVInfos.at(uvIndex);
 	}
 
+	void PrintModelAnim(const ModelAnim& model)
+	{
+		std::cout << "model name: " << model.modelName <<" ref bone: " <<model.refModelUUID << " ref stack: " 
+			<< model.refStackUUID << " ref layer: " << model.refLayerUUID<< std::endl;
+		for (int i = ChannelType::T_X; i < ChannelType::ChannelMax; ++i)
+		{
+			switch (i)
+			{
+			case ChannelType::T_X:
+				std::cout << "channel T_X ";
+				break;
+			case ChannelType::T_Y:
+				std::cout << "channel T_Y ";
+				break;
+			case ChannelType::T_Z:
+				std::cout << "channel T_Z ";
+				break;
+			case ChannelType::R_X:
+				std::cout << "channel R_X ";
+				break;
+			case ChannelType::R_Y:
+				std::cout << "channel R_Y ";
+				break;
+			case ChannelType::R_Z:
+				std::cout << "channel R_Z ";
+				break;
+			case ChannelType::S_X:
+				std::cout << "channel S_X ";
+				break;
+			case ChannelType::S_Y:
+				std::cout << "channel S_Y ";
+				break;
+			case ChannelType::S_Z:
+				std::cout << "channel S_Z ";
+				break;
+			default:
+				break;
+			}
+			std::cout << "default value: " << model.channels[i].defaultValue << std::endl;
+			std::cout << "keys: [";
+			for (Key key : model.channels[i].keys)
+			{
+				std::cout << "(" << key.frame << ", " << key.value << "), ";
+			}
+			std::cout << "]" << std::endl;
+		}
+	}
+
 	void PrintNode(const Node& node)
 	{
 		std::cout << "node name: " << node.nodeName << " is bone: " << node.isBone << std::endl;

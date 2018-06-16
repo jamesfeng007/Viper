@@ -56,7 +56,7 @@ public:
 	int GetMaterialCount() { return static_cast<int>(mMaterials.size()); }
 	FbxUInt64 GetMaterialUUID(int index);
 	const char* GetMaterialName(int index);
-	bool GetMaterialProps(int index, Vector3* pEmissive, Vector3* pAmbient, Vector3* pDiffuse);
+	bool GetMaterialProps(int index, Vector3* pEmissive, Vector3* pAmbient, Vector3* pDiffuse, MatProps* pExtra);
 
 	int GetTextureCount() { return static_cast<int>(mTextures.size());	}
 	FbxUInt64 GetTextureUUID(int index);
@@ -82,9 +82,18 @@ public:
 	FbxUInt64 GetSkinUUID(int index);
 	const char* GetSkinName(int index);
 
+	int GetStackCount() { return static_cast<int>(mStacks.size()); }
+	FbxUInt64 GetStackUUID(int index);
+	double GetAnimChannelDefaultValue(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel);
+	const char* GetStackName(int index);
+	const char* GetLayerName(FbxUInt64 uuid);
+	int GetKeyCount(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel);
+	bool GetKeyTimeValue(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel, FbxLongLong* pTimes, double* pValues, int keyCount);
+
 	void PrintMesh();
 	void PrintNode();
 	void PrintSkeleton();
+	void PrintAnimation();
 
 private:
 	void AnalyzeGlobalSettings(FbxGlobalSettings* pGlobalSettings);
@@ -96,7 +105,9 @@ private:
 	void AnalyzeTexture(FbxProperty& prop, FbxSurfaceMaterial* lMaterial);
 	void AnalyzeBone(FbxNode* pNode);
 	void AnalyzePose(FbxScene* pScene);
-
+	void AnalyzeAnimation(FbxScene* pScene);
+	void AnalyzeAnimation(FbxAnimStack* pAnimStack, FbxAnimLayer* pAnimLayer, FbxNode* pNode);
+	void AnalyzeChannel(FbxAnimLayer* pAnimLayer, const char* channelName, FbxAnimCurve* pAnimCurve, FbxAnimCurveNode* pAnimCurveNode, Channel& channel);
 	
 
 private:
@@ -115,4 +126,7 @@ private:
 	std::vector<PoseNode> mPoses;
 	std::vector<SubDeformer> mSubDeformers;
 	std::vector<Deformer> mDeformers;
+	std::vector<ModelAnim> mAnims;
+	std::vector<NameUUID> mLayers;
+	std::vector<NameUUID> mStacks;;
 };

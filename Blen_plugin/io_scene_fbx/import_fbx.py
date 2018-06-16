@@ -34,6 +34,7 @@ if "bpy" in locals():
 
 import bpy
 from mathutils import Matrix, Euler, Vector
+import sys
 
 # -----
 # Utils
@@ -2271,6 +2272,10 @@ def load(operator, context, filepath="",
          primary_bone_axis='Y',
          secondary_bone_axis='X',
          use_prepost_rot=True):
+    
+    orig_stdout = sys.stdout
+    f = open('import_fbx_out.txt', 'w')
+    sys.stdout = f    
 
     global fbx_elem_nil
     fbx_elem_nil = FBXElem('', (), (), ())
@@ -3187,4 +3192,7 @@ def load(operator, context, filepath="",
     perfmon.level_down()
 
     perfmon.level_down("Import finished.")
+    sys.stdout = orig_stdout
+    f.close()
+        
     return {'FINISHED'}
