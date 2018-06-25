@@ -75,7 +75,7 @@ namespace FBXUtil
 
 	void PrintNode(const Node& node)
 	{
-		std::cout << "node name: " << node.nodeName << " is bone: " << node.isBone << std::endl;
+		std::cout << "node name: " << node.nodeName << " is bone: " << node.isBone << " attribute name: " << node.nodeAttributeName << std::endl;
 		std::cout << "node translation: " << node.lclTranslation << " rotation: " << node.lclRotation << " scale: " << node.lclScaling << std::endl;
 		std::cout << "node GeometricTranslation: " << node.GeometricTranslation << " GeometricRotation: " << node.GeometricRotation << " GeometricScaling: " << node.GeometricScaling << std::endl;
 		std::cout << "node RotationOffset: " << node.RotationOffset << " RotationPivot: " << node.RotationPivot << " ScalingOffset: " << node.ScalingOffset << std::endl;

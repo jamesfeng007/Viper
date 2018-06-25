@@ -208,50 +208,6 @@ class FbxImportHelperNode:
               )
         for c in self.children:
             c.print_info(indent + 1)
-            
-    def get_world_matrix_as_parent(self):
-        matrix = self.parent.get_world_matrix_as_parent() if self.parent else Matrix()
-        if self.matrix_as_parent:
-            matrix = matrix * self.matrix_as_parent
-        return matrix            
-            
-    def get_world_matrix(self):
-        matrix = self.parent.get_world_matrix_as_parent() if self.parent else Matrix()
-        if self.matrix:
-            matrix = matrix * self.matrix
-        return matrix            
-            
-    def get_matrix(self):
-        matrix = self.matrix if self.matrix else Matrix()
-        if self.pre_matrix:
-            matrix = self.pre_matrix * matrix
-        if self.post_matrix:
-            matrix = matrix * self.post_matrix
-        return matrix
-    
-    def get_bind_matrix(self):
-        matrix = self.bind_matrix if self.bind_matrix else Matrix()
-        if self.pre_matrix:
-            matrix = self.pre_matrix * matrix
-        if self.post_matrix:
-            matrix = matrix * self.post_matrix
-        return matrix
-    
-    def make_bind_pose_local(self, parent_matrix=None):
-        if parent_matrix is None:
-            parent_matrix = Matrix()
-
-        if self.bind_matrix:
-            bind_matrix = parent_matrix.inverted_safe() * self.bind_matrix
-        else:
-            bind_matrix = self.matrix.copy() if self.matrix else None
-
-        self.bind_matrix = bind_matrix
-        if bind_matrix:
-            parent_matrix = parent_matrix * bind_matrix
-
-        for child in self.children:
-            child.make_bind_pose_local(parent_matrix)        
         
     def mark_leaf_bones(self):
         if self.is_bone and len(self.children) == 1:
@@ -356,6 +312,50 @@ class FbxImportHelperNode:
             in_armature = True
         for child in self.children:
             child.find_fake_bones(in_armature)
+            
+    def get_world_matrix_as_parent(self):
+        matrix = self.parent.get_world_matrix_as_parent() if self.parent else Matrix()
+        if self.matrix_as_parent:
+            matrix = matrix * self.matrix_as_parent
+        return matrix            
+            
+    def get_world_matrix(self):
+        matrix = self.parent.get_world_matrix_as_parent() if self.parent else Matrix()
+        if self.matrix:
+            matrix = matrix * self.matrix
+        return matrix            
+            
+    def get_matrix(self):
+        matrix = self.matrix if self.matrix else Matrix()
+        if self.pre_matrix:
+            matrix = self.pre_matrix * matrix
+        if self.post_matrix:
+            matrix = matrix * self.post_matrix
+        return matrix
+    
+    def get_bind_matrix(self):
+        matrix = self.bind_matrix if self.bind_matrix else Matrix()
+        if self.pre_matrix:
+            matrix = self.pre_matrix * matrix
+        if self.post_matrix:
+            matrix = matrix * self.post_matrix
+        return matrix
+    
+    def make_bind_pose_local(self, parent_matrix=None):
+        if parent_matrix is None:
+            parent_matrix = Matrix()
+
+        if self.bind_matrix:
+            bind_matrix = parent_matrix.inverted_safe() * self.bind_matrix
+        else:
+            bind_matrix = self.matrix.copy() if self.matrix else None
+
+        self.bind_matrix = bind_matrix
+        if bind_matrix:
+            parent_matrix = parent_matrix * bind_matrix
+
+        for child in self.children:
+            child.make_bind_pose_local(parent_matrix)
             
     def collect_skeleton_meshes(self, meshes):
         for _, m in self.clusters:
@@ -758,7 +758,7 @@ class FbxImportHelperNode:
             for child in self.children:
                 child.link_hierarchy(settings, scene)
 
-            return None            
+            return None
         
 def blen_read_model_transform_preprocess(fbxSDKImport, model_index, rot_alt_mat, use_prepost_rot):
     const_vector_zero_3d = 0.0, 0.0, 0.0
@@ -804,9 +804,10 @@ def blen_read_model_transform_preprocess(fbxSDKImport, model_index, rot_alt_mat,
         rot_ord = 'XYZ'
         
     elem_name_utf8 = fbxSDKImport.get_model_name(model_index).decode('utf-8')
+    model_attribute_name = fbxSDKImport.get_model_attribute_name(model_index)
         
     fbx_obj = FBXElem(
-        b'Model', elem_name_utf8, b"Model", None
+        b'Model', elem_name_utf8, model_attribute_name, None
     )        
     
     return fbx_obj, FBXTransformData(loc, geom_loc,
@@ -1512,7 +1513,12 @@ def load(operator, context, filepath="",
     
     import os
     import time
-    from bpy_extras.io_utils import axis_conversion    
+    from bpy_extras.io_utils import axis_conversion
+    import sys
+    
+    orig_stdout = sys.stdout
+    f = open('import_fbx_sdk_out.txt', 'w')
+    sys.stdout = f    
     
     print("filepath: %s" % filepath)
     
@@ -1700,6 +1706,7 @@ def load(operator, context, filepath="",
             
     # get clusters and bind pose
     for helper_uuid, helper_node in fbx_helper_nodes.items():
+
         if not helper_node.is_bone:
             continue
         for c in connections:
@@ -2017,7 +2024,8 @@ def load(operator, context, filepath="",
                     layer_name = fbxSDKImport.get_layer_name(layer_uuid).decode('utf-8')
                         
                     for helper_uuid, helper_node in fbx_helper_nodes.items():
-                        if not helper_node.is_bone:
+                        animation_exist = fbxSDKImport.animation_exist(stack_uuid, layer_uuid, helper_uuid)
+                        if not animation_exist:
                             continue
                         
                         id_data = helper_node.bl_obj
@@ -2091,7 +2099,7 @@ def load(operator, context, filepath="",
                         rot_prev = bl_obj.rotation_euler.copy()
                         
                         # Pre-compute inverted local rest matrix of the bone, if relevant.
-                        restmat_inv = helper_node.get_bind_matrix().inverted_safe() if helper_node.is_bone else None
+                        restmat_inv = helper_node.get_bind_matrix().inverted_safe() if helper_node.is_bone else None                   
                         
                         for frame, values in blen_read_animations_curves_iter(fbx_curves, anim_offset, 0, fps):
                             for v, (fbxprop, channel, _fbx_acdata) in values:
@@ -2105,7 +2113,7 @@ def load(operator, context, filepath="",
                             
                             # compensate for changes in the local matrix during processing
                             if helper_node.anim_compensation_matrix:
-                                mat = mat * helper_node.anim_compensation_matrix
+                                mat = mat * helper_node.anim_compensation_matrix                       
                 
                             # apply pre- and post matrix
                             # post-matrix will contain any correction for lights, camera and bone orientation
@@ -2136,6 +2144,8 @@ def load(operator, context, filepath="",
                         for fc in blen_curves:
                             fc.update()                                
                     
+    sys.stdout = orig_stdout
+    f.close()                    
 
     return {'FINISHED'}
     

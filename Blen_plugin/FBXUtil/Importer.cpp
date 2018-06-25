@@ -602,6 +602,25 @@ int Importer::GetKeyCount(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 bo
 	return 0;
 }
 
+bool Importer::AnimationExist(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID)
+{
+	std::vector<ModelAnim>::iterator ite = std::find_if(mAnims.begin(), mAnims.end(), [stackUUID, layerUUID, boneUUID](const ModelAnim& anim)
+	{ return anim.refStackUUID == stackUUID && anim.refLayerUUID == layerUUID && anim.refModelUUID == boneUUID; });
+
+	if (ite != std::end(mAnims))
+	{
+		for (int i = T_X; i < ChannelMax; ++i)
+		{
+			if ((*ite).channels[i].keys.size() > 0)
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 FbxUInt64 Importer::GetStackUUID(int index)
 {
 	return mStacks.at(index).refUUID;
@@ -1009,16 +1028,32 @@ void Importer::AnalyzeMesh(FbxNode* pNode)
 	AnalyzeLink(lMesh);
 }
 
-void Importer::AnalyzeBone(FbxNode* pNode)
+void Importer::AnalyzeBone(FbxNode* pNode, Node& node)
 {
 	FbxSkeleton* lSkeleton = (FbxSkeleton*)pNode->GetNodeAttribute();
-	if (lSkeleton->GetSkeletonType() == FbxSkeleton::eLimbNode)
+	if (lSkeleton->GetSkeletonType() == FbxSkeleton::eLimbNode || lSkeleton->GetSkeletonType() == FbxSkeleton::eLimb)
 	{
 		mConnections.push_back(UInt64Vector2(pNode->GetUniqueID(), lSkeleton->GetUniqueID()));
 		Bone bone(lSkeleton->GetName());
 		bone.uuid = lSkeleton->GetUniqueID();
 		mBones.push_back(bone);
+
+		node.isBone = true;
 	}
+
+	if (lSkeleton->GetSkeletonType() == FbxSkeleton::eLimbNode)
+	{
+		node.nodeAttributeName = std::string("LimbNode");
+	}
+	else if (lSkeleton->GetSkeletonType() == FbxSkeleton::eLimb)
+	{
+		node.nodeAttributeName = std::string("Limb");
+	}
+	else if (lSkeleton->GetSkeletonType() == FbxSkeleton::eRoot)
+	{
+		node.nodeAttributeName = std::string("Root");
+	}
+	
 }
 
 void Importer::AnalyzeContent(FbxNode* pNode)
@@ -1052,10 +1087,13 @@ void Importer::AnalyzeContent(FbxNode* pNode)
 		case FbxNodeAttribute::eMesh:
 			AnalyzeMesh(pNode);
 			AnalyzeMaterial(pNode);
+			node.nodeAttributeName = std::string("Mesh");
 			break;
 		case FbxNodeAttribute::eSkeleton:
-			AnalyzeBone(pNode);
-			node.isBone = true;
+			AnalyzeBone(pNode, node);
+			break;
+		case FbxNodeAttribute::eNull:
+			node.nodeAttributeName = std::string("Null");
 			break;
 		default:
 			break;
@@ -1314,6 +1352,7 @@ extern "C"
 	DLLEXPORT bool Importer_GetModelTransformProp(Importer* importer, int index, ObjectTransformProp* prop) { return importer->GetModelTransformProp(index, prop); }
 	DLLEXPORT FbxUInt64 Importer_GetModelUUID(Importer* importer, int index) { return importer->GetModelUUID(index); }
 	DLLEXPORT const char* Importer_GetModelName(Importer* importer, int index) { return importer->GetModelName(index); }
+	DLLEXPORT const char* Importer_GetModelAttributeName(Importer* importer, int index) { return importer->GetModelAttributeName(index); }
 	DLLEXPORT bool Importer_IsModelBone(Importer* importer, int index) { return importer->IsModelBone(index); }
 
 	DLLEXPORT FbxUInt64 Importer_GetMeshUUID(Importer* importer, int index) { return importer->GetMeshUUID(index); }
@@ -1375,6 +1414,7 @@ extern "C"
 	DLLEXPORT int Importer_GetKeyCount(Importer* importer, FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel) { return importer->GetKeyCount(stackUUID, layerUUID, boneUUID, channel); }
 	DLLEXPORT bool Importer_GetKeyTimeValue(Importer* importer, FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel, FbxLongLong* pTimes, double* pValues, int keyCount)
 	{ return importer->GetKeyTimeValue(stackUUID, layerUUID, boneUUID, channel, pTimes, pValues, keyCount); }
+	DLLEXPORT bool Importer_AnimationExist(Importer* importer, FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID) { return importer->AnimationExist(stackUUID, layerUUID, boneUUID); }
 
 	DLLEXPORT void Importer_PrintMesh(Importer* importer) { importer->PrintMesh(); }
 	DLLEXPORT void Importer_PrintNode(Importer* importer) { importer->PrintNode(); }

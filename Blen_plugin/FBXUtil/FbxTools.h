@@ -119,6 +119,7 @@ namespace FBXUtil
 		int RotationOrder;
 		bool RotationActive;
 		bool isBone;
+		std::string nodeAttributeName;
 	};
 
 	struct Mat4x4

@@ -29,6 +29,7 @@ public:
 	int GetModelCount() { return static_cast<int>(mModels.size()); }
 	bool GetModelTransformProp(int index, ObjectTransformProp* prop);
 	const char* GetModelName(int index) { return mModels.at(index).nodeName.c_str(); }
+	const char* GetModelAttributeName(int index) { return mModels.at(index).nodeAttributeName.c_str(); }
 	bool IsModelBone(int index) { return mModels.at(index).isBone; }
 
 	int GetMeshCount() { return static_cast<int>(mMesh.size()); }
@@ -89,6 +90,7 @@ public:
 	const char* GetLayerName(FbxUInt64 uuid);
 	int GetKeyCount(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel);
 	bool GetKeyTimeValue(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID, ChannelType channel, FbxLongLong* pTimes, double* pValues, int keyCount);
+	bool AnimationExist(FbxUInt64 stackUUID, FbxUInt64 layerUUID, FbxUInt64 boneUUID);
 
 	void PrintMesh();
 	void PrintNode();
@@ -103,7 +105,7 @@ private:
 	void AnalyzeLink(FbxGeometry* pGeometry);
 	void AnalyzeMaterial(FbxNode* pNode);
 	void AnalyzeTexture(FbxProperty& prop, FbxSurfaceMaterial* lMaterial);
-	void AnalyzeBone(FbxNode* pNode);
+	void AnalyzeBone(FbxNode* pNode, Node& node);
 	void AnalyzePose(FbxScene* pScene);
 	void AnalyzeAnimation(FbxScene* pScene);
 	void AnalyzeAnimation(FbxAnimStack* pAnimStack, FbxAnimLayer* pAnimLayer, FbxNode* pNode);
